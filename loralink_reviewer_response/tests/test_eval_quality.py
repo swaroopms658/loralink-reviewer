@@ -23,17 +23,17 @@ def test_signature_and_cols():
     sig = inspect.signature(evaluate_adapter)
     params = list(sig.parameters.values())
     names = [p.name for p in params]
-    assert names == ["base_model", "adapter_dir", "dataset", "eval_holdout",
-                     "max_new_tokens", "limit", "arm", "seed", "out_csv"]
+    assert names == ["base_model", "adapter_dir", "dataset", "max_new_tokens",
+                     "limit", "arm", "seed", "out_csv"]
 
     kinds = {p.name: p.kind for p in params}
     for pos in ("base_model", "adapter_dir", "dataset"):
         assert kinds[pos] == inspect.Parameter.POSITIONAL_OR_KEYWORD
-    for kw in ("eval_holdout", "max_new_tokens", "limit", "arm", "seed", "out_csv"):
+    for kw in ("max_new_tokens", "limit", "arm", "seed", "out_csv"):
         assert kinds[kw] == inspect.Parameter.KEYWORD_ONLY
 
     defaults = {p.name: p.default for p in params if p.default is not inspect._empty}
-    assert defaults == {"eval_holdout": 200, "max_new_tokens": 48, "limit": 100,
+    assert defaults == {"max_new_tokens": 48, "limit": 100,
                         "arm": "", "seed": 0, "out_csv": "results_quality.csv"}
 
     assert eval_quality._COLS == ["arm", "seed", "dataset", "base_model",

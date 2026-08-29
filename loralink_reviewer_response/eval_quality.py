@@ -68,7 +68,7 @@ def _gen_bleu_rouge(model, tok, mrs, refs, max_new_tokens):
     dev = next(model.parameters()).device
     preds = []
     for mr in mrs:
-        prompt = f"Data: {mr}\nText:"
+        prompt = f"Data: {mr}\nText: "
         enc = tok(prompt, return_tensors="pt").to(dev)
         gen = model.generate(**enc, max_new_tokens=max_new_tokens,
                              do_sample=False, pad_token_id=tok.pad_token_id)
@@ -81,9 +81,8 @@ def _gen_bleu_rouge(model, tok, mrs, refs, max_new_tokens):
     return bleu, rouge * 100.0
 
 
-def evaluate_adapter(base_model, adapter_dir, dataset, *, eval_holdout=200,
-                     max_new_tokens=48, limit=100, arm="", seed=0,
-                     out_csv="results_quality.csv"):
+def evaluate_adapter(base_model, adapter_dir, dataset, *, max_new_tokens=48,
+                     limit=100, arm="", seed=0, out_csv="results_quality.csv"):
     model, tok = _load(base_model, adapter_dir)
     if dataset == "wikitext":
         ds = load_dataset("wikitext", "wikitext-2-raw-v1", split="test",

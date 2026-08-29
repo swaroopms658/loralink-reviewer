@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import glob
 import json
+import math
 import os
 import pathlib
 import re
@@ -61,7 +62,19 @@ def _write_csv(df, path, note):
     """DataFrame to CSV with a leading ``# <provenance>`` comment line."""
     with open(path, "w", newline="", encoding="utf-8") as fh:
         fh.write(f"# {note}\n")
-        df.to_csv(fh, index=False)
+        df.to_csv(fh, index=False, float_format="%.4g")
+
+
+def _round(obj):
+    """Recursively round floats to 4dp and turn non-finite floats into None,
+    so summary.json carries no 17-digit noise and no invalid ``NaN`` token."""
+    if isinstance(obj, dict):
+        return {k: _round(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_round(v) for v in obj]
+    if isinstance(obj, float):
+        return None if not math.isfinite(obj) else round(float(obj), 4)
+    return obj
 
 
 def _save_fig(f, ax, path_stem, caption):
@@ -257,22 +270,23 @@ def _t4(results_dir, fig, summary):
             infeasible_mask = infeasible_mask | note_col.loc[idx].str.contains("infeasible")
         feasible = g[~infeasible_mask]
         if feasible.empty:
-            row = {"strategy": strat, "partition_balance_std": float("nan"),
-                   "mean_step_latency_s": float("nan"), "status": "infeasible", "n": 0}
+            row = {"strategy": strat, "partition_balance_std": None,
+                   "mean_step_latency_s": None, "status": "infeasible", "n": 0,
+                   "tag": "[ours]"}
         else:
             bstd = _num(feasible["partition_balance_std"]).dropna()
             lat = _num(feasible["mean_step_latency_s"]).dropna()
             row = {
                 "strategy": strat,
-                "partition_balance_std": float(bstd.mean()) if not bstd.empty else float("nan"),
-                "mean_step_latency_s": float(lat.mean()) if not lat.empty else float("nan"),
+                "partition_balance_std": float(bstd.mean()) if not bstd.empty else None,
+                "mean_step_latency_s": float(lat.mean()) if not lat.empty else None,
                 "status": "ok",
                 "n": int(len(feasible)),
+                "tag": "[ours]",
             }
         rows.append(row)
-        summ[strat] = {**{k: row[k] for k in ("partition_balance_std",
-                                              "mean_step_latency_s", "status", "n")},
-                       "tag": "[ours]"}
+        summ[strat] = {k: row[k] for k in ("partition_balance_std",
+                                           "mean_step_latency_s", "status", "n", "tag")}
     rdf = pd.DataFrame(rows)
     _write_csv(rdf, fig / "T4_scheduling.csv", caption)
     summary["scheduling"] = summ
@@ -309,9 +323,10 @@ def _t5(results_dir, fig, summary):
     rows = []
     for nw, g in df.groupby("_nw"):
         lat = g["_lat"].mean()
-        thr = (nw / lat) if lat and lat > 0 else float("nan")
+        thr = (nw / lat) if lat and lat > 0 else None
         rows.append({"n_workers": int(nw), "mean_step_latency_s": float(lat),
-                     "throughput_workers_per_s": float(thr), "tag": "[ours]"})
+                     "throughput_workers_per_s": None if thr is None else float(thr),
+                     "tag": "[ours]"})
     rdf = pd.DataFrame(rows).sort_values("n_workers")
     if rdf.empty:
         print("WARN: no data for T5")
@@ -396,8 +411,9 @@ def build_all(results_dir, baselines_csv, out_dir):
     _t4(results_dir, fig, summary)
     _t5(results_dir, fig, summary)
     _t6(results_dir, fig, summary)
-    (fig / "summary.json").write_text(json.dumps(summary, indent=2, default=float),
-                                      encoding="utf-8")
+    (fig / "summary.json").write_text(
+        json.dumps(_round(summary), indent=2, allow_nan=False, default=float),
+        encoding="utf-8")
     return summary
 
 
@@ -415,6 +431,10 @@ def render_response(summary_json, template_md, out_md):
     _walk("", data)
     txt = pathlib.Path(template_md).read_text(encoding="utf-8")
     for k, v in flat.items():
-        txt = txt.replace("{{" + k + "}}", str(v))
+        rep = format(v, ".4g") if isinstance(v, (int, float)) and not isinstance(v, bool) else str(v)
+        txt = txt.replace("{{" + k + "}}", rep)
+    leftover = sorted(set(re.findall(r"\{\{[^}]+\}\}", txt)))
+    if leftover:
+        print("WARN: unfilled placeholder(s): " + ", ".join(leftover))
     pathlib.Path(out_md).write_text(txt, encoding="utf-8")
     return out_md

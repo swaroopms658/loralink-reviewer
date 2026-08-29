@@ -3,7 +3,7 @@ import json
 
 import pandas as pd
 
-from loralink_reviewer_response.aggregate import build_all, render_response
+from loralink_reviewer_response.aggregate import _read_many, build_all, render_response
 
 
 def _write(p, rows):
@@ -117,7 +117,10 @@ def test_t4_scheduling(tmp_path):
     assert (fig / "T4_bars.png").exists()
     assert "scheduling" in out
     assert out["scheduling"]["proportional"]["status"] == "infeasible"
+    assert out["scheduling"]["proportional"]["mean_step_latency_s"] is None
     assert out["scheduling"]["smart"]["tag"] == "[ours]"
+    t4 = pd.read_csv(fig / "T4_scheduling.csv", comment="#")
+    assert (t4["tag"] == "[ours]").all()
 
 
 def test_t5_scalability(tmp_path):
@@ -158,3 +161,28 @@ def test_render_response_substitutes(tmp_path):
     render_response(str(sj), str(tpl), str(out))
     txt = out.read_text()
     assert "value is 42.5 and hi" == txt
+
+
+def test_render_response_warns_on_unfilled(tmp_path, capsys):
+    sj = tmp_path / "s.json"
+    sj.write_text(json.dumps({"x": 1}))
+    tpl = tmp_path / "t.md"
+    tpl.write_text("{{x}} but {{missing.key}}")
+    out = tmp_path / "o.md"
+    render_response(str(sj), str(tpl), str(out))
+    assert "{{missing.key}}" in out.read_text()
+    assert "unfilled placeholder" in capsys.readouterr().out
+
+
+def test_read_many_suffix_excludes_summary(tmp_path):
+    rd = tmp_path
+    _write(rd / "results_converge_x.csv", [
+        {"run_tag": "c", "global_batch": b, "loss": 3.0 - 0.01 * b} for b in range(6)])
+    _write(rd / "results_converge_x.summary.csv", [_summary_row(n_batches=6)])
+    per_batch = _read_many(str(rd), "results_converge_", ".csv")
+    assert len(per_batch) == 6
+    assert "global_batch" in per_batch.columns
+    assert "n_batches" not in per_batch.columns
+    summ = _read_many(str(rd), "results_converge_", ".summary.csv")
+    assert len(summ) == 1
+    assert "n_batches" in summ.columns

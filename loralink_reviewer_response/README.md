@@ -18,7 +18,8 @@ partitioners, metric logging, and an eval script.
 | System metrics | `EleutherAI/gpt-neo-125M` | 01, 03, 04, 05 | Latency, compression ratio, partition balance and loss *shape* do not depend on generation quality. 125 M keeps every run to 3–5 min. |
 | Task quality | `microsoft/phi-1_5` (1.3 B) | 02, 02b | A 1.3 B LoRA fine-tune produces coherent E2E output, so BLEU/ROUGE-L land in a believable range and the compression ON→OFF delta is meaningful. Fits Free T4 at seq 256 / batch 1. |
 
-Both tiers are **below the paper's 2.7–3 B headline models**. Quality numbers are
+Both tiers are **below the paper's 2.7–3 B headline models** (paper Table:
+hyperparameters). Quality numbers are
 therefore reported as **deltas and trends**, never as SOTA-competitive
 absolutes. This caveat is repeated in `RESPONSE_ABHAY_NIKHIL.md` everywhere an
 absolute appears.
@@ -74,15 +75,18 @@ parallel, download the `results_*` CSVs, drop them into `results/`, then run
 |---|---|---|---|---|---|
 | `00_setup_smoke` | 125 M | env smoke test | `""` | ~9 min | `results_smoke_*.csv` |
 | `01_stat_validation` | 125 M | concerns 1, 3 | `"wikitext"` **or** `"e2e"` (one dataset per account) | ~20 min | `results_stat_*.csv` + `.summary.csv` |
-| `02_task_quality` | Phi-1.5 | concern 2 | `"e2e:0"`, `"e2e:1"`, `"e2e:2"`, `"wikitext:0"`, … (one `dataset:seed` per account) | ~28–30 min | `results_quality_*.csv`, `results_qsys_*.csv` |
-| `02b_convergence` | Phi-1.5 | concern 3 | `"e2e"` — **run once, one account only** | ~33–38 min | `results_converge_*.csv` |
+| `02_task_quality` | Phi-1.5 | concern 2 | `"e2e:0"`, `"e2e:1"`, `"e2e:2"`, `"wikitext:0"`, `"wikitext:1"`, `"wikitext:2"` (one `dataset:seed` per account) | ~28–30 min | `results_quality_*.csv` (aggregated); `results_qsys_*.csv` (retained as raw Phi-1.5 per-batch training log for the appendix, not aggregated) |
+| `02b_convergence` | Phi-1.5 | concern 3 | — (n/a, single hardcoded run) | ~33–38 min | `results_converge_*.csv` |
 | `03_alt_scheduling` | 125 M | concern 8 | `""` (whole notebook, one account) | ~24 min | `results_sched_*.csv` + `.summary.csv` |
 | `04_scalability_sim` | 125 M | concern 5 | `""` for the full 2/4/6/8 sweep, or `"6,8"` to split across accounts | ~28 min | `results_scale_*.csv` + `.summary.csv` |
 | `05_network_netem` | 125 M | concern 7 | `""` for all delays, or `"0,25"` to split by delay | ~26 min | `results_net_*.csv` + `.summary.csv` |
 | `99_aggregate_report` | — | merges everything | — | ~6 min | `figures/*`, `RESPONSE_ABHAY_NIKHIL.filled.md` |
 
-Suggested account map: acct1 → `01` wikitext · acct2 → `01` e2e · acct3–5 → `02`
-`e2e:{0,1,2}` · acct6 → `02b` · acct7 → `03` · acct8 → `04` · acct9 → `05`.
+Suggested account map: acct1 → `01` wikitext · acct2 → `01` e2e ·
+acct3–5 → `02` `e2e:{0,1,2}` · acct6–8 → `02` `wikitext:{0,1,2}` ·
+acct9 → `02b` · acct10 → `03` · acct11 → `04` · acct12 → `05`.
+The `02` `wikitext:*` shards give n=3 for the WikiText perplexity delta in
+Concern 2 — skip them only if you accept a leftover placeholder there.
 `aggregate.py` tolerates missing shards — it prints `WARN: no data for T#` and a
 leftover `{{placeholder}}` for whatever did not come back.
 

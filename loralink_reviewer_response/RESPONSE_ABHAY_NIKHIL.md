@@ -22,9 +22,10 @@ indifferent to it.
 - `microsoft/phi-1_5` (1.3 B) — concern 2 only (BLEU / ROUGE-L / perplexity),
   plus the 3-epoch convergence run for concern 3.
 
-Both sit **below the paper's 2.7–3 B headline models**. Every absolute quality
-number below is therefore framed as a **delta (compression ON − OFF)** or a
-**trend**, never as a SOTA-competitive absolute. This is stated again in each
+Both sit **below the paper's 2.7–3 B headline models** (paper Table:
+hyperparameters). Every absolute quality number below is therefore framed as a
+**delta (compression ON − OFF)** or a **trend**, never as a SOTA-competitive
+absolute. This is stated again in each
 section where an absolute appears.
 
 **Datasets and splits.** WikiText-2-raw-v1 — train on `train`, evaluate on
@@ -139,18 +140,20 @@ generation quality at this scale.
 
 **What we did.** Two runs. (a) The 60-batch seed sweep from concern 1 gives a
 run-to-run loss band. (b) `02b_convergence.ipynb`: one `phi-1_5` run, 3 epochs
-(~150 batches), compression ON, E2E — a single longer trajectory. `aggregate.py`
-plots both into `figures/T1_loss_curve.png`.
+(~150 mini-batches at 50/epoch), compression ON, E2E — a single longer
+trajectory. `aggregate.py` plots both into `figures/T1_loss_curve.png`.
 
-**Result (ours).** The 3-epoch curve is monotonically decreasing with no
-divergence when compression is ON. Across the concern-1 seeds the loss std is
+**Result (ours).** The 3-epoch loss curve (`figures/T1_loss_curve.png`, NB99
+cell 5) is what a human inspects for monotonic descent and absence of divergence
+with compression ON. Across the concern-1 seeds the loss std is
 **{{stat_validation.e2e.mean_loss.std}}** on E2E and
 **{{stat_validation.wikitext.mean_loss.std}}** on WikiText-2 `[ours]` — i.e. the
 endpoint is stable across seeds, not a lucky single run.
 
 **Honest limitation.** 3 epochs on 1.3 B is still short next to the paper's
-100-batch × full protocol; this is *supporting* convergence evidence. The
-paper's original curves remain primary. Small model, so absolute loss is high.
+100-batch protocol (paper Table: hyperparameters); this is *supporting*
+convergence evidence. The paper's original curves remain primary. Small model,
+so absolute loss is high.
 
 ---
 
@@ -161,9 +164,9 @@ HSplitLoRA, Petals, QLoRA, Megatron-LM.
 
 **What we did.** Per the user's hard constraint, we do **not** reproduce
 competitor methods. `baselines/published_baselines.csv` holds
-{{ours_vs_published.n_published}} transcribed published numbers from 7 papers;
-`baselines/SOURCES.md` quotes the exact source sentence, table/figure number and
-URL for each. `aggregate.py` builds `figures/T3_ours_vs_published.csv` placing
+{{ours_vs_published.n_published}} transcribed published numbers from 7 papers
+(see `baselines/SOURCES.md`, which quotes the exact source sentence, table/figure
+number and URL for each). `aggregate.py` builds `figures/T3_ours_vs_published.csv` placing
 our {{ours_vs_published.n_ours}} LoraLink row(s) `[ours]` beside them.
 
 **Result.** The closest-regime comparators — split learning on commodity GPUs
@@ -194,9 +197,11 @@ orientation only.
 counts 2 / 4 / 6 / 8 as separate loopback processes, 30 batches, 2 reps each.
 Measures step latency and derived throughput vs worker count.
 
-**Result (ours).** `figures/T5_scalability_sim.csv` / `T5_lines.png` reports
-{{scalability.n}} worker-count points up to 8. Every row and the figure caption
-carry the label **"{{scalability.note}}"** `[ours]`.
+**Result (ours).** `figures/T5_scalability_sim.csv` / `T5_lines.png` (NB99
+cell 5) reports {{scalability.n}} worker-count points up to 8; the plot is what a
+human inspects for how step latency and throughput move as workers are added.
+Every row and the figure caption carry the label **"{{scalability.note}}"**
+`[ours]`.
 
 **Honest limitation.** This is a **{{loopback_disclaimer}}** — inter-process
 latency on `lo` is far below a real LAN/WAN link, so absolute step latency is
@@ -237,10 +242,10 @@ bandwidth; study the effect.
 loopback device before each run (in-process socket shim as fallback if `netem`
 is blocked). Measures step latency per cell.
 
-**Result (ours).** `figures/T6_network.csv` / `T6_heatmap.png` is a
-{{network.n}}-cell delay × loss grid `[ours]`. Step latency rises monotonically
-with both added delay and loss, as expected. Note on every cell:
-**"{{network.note}}"**.
+**Result (ours).** `figures/T6_network.csv` / `T6_heatmap.png` (NB99 cell 5) is a
+{{network.n}}-cell delay × loss grid `[ours]`; the heatmap is what a human
+inspects for step latency versus injected delay and loss — the expected shape is
+latency rising with both. Note on every cell: **"{{network.note}}"**.
 
 **Honest limitation.** Loopback + emulation, not WAN — `netem` injects a
 *modelled* delay/loss distribution on `lo`, it does not reproduce real Wi-Fi

@@ -39,7 +39,9 @@ seeds `{0,1,2}` (n = 3). Intervals are 95 % Student-t
 
 **Simulation disclaimer (concerns 5 and 7).** Scalability and network numbers
 come from a **{{loopback_disclaimer}}**: N worker processes on `127.0.0.x` with
-`tc`/`netem` shaping the loopback device. This shows partitioner and pipeline
+added-delay / packet-loss shaping of the loopback path (`tc`/`netem` where the
+Colab sandbox permits `NET_ADMIN`, otherwise an in-process delay/loss shim).
+This shows partitioner and pipeline
 behaviour past four stages and the *shape* of the latency response to delay and
 loss. It is **not** a WAN measurement; the paper's real 4-node Topology-A
 numbers remain the primary evidence there.
@@ -295,7 +297,7 @@ this is an internal ablation, all rows `[ours]`.
 | 4 baselines | transcribed literature | `[published, <ref>]` — every row |
 | 5 scalability | our loopback simulation | `[ours]`, labelled loopback |
 | 6 cross-platform | prose, recommend softening | no numbers |
-| 7 network | our loopback + netem emulation | `[ours]`, labelled loopback |
+| 7 network | our loopback delay/loss emulation (netem or in-process shim) | `[ours]`, labelled loopback |
 | 8 scheduling | our internal ablation | `[ours]` |
 
 No number in this document is stated without an `[ours]` or `[published, <ref>]`

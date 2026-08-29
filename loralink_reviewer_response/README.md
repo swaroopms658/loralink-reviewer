@@ -158,7 +158,8 @@ jupyter nbconvert --to notebook --execute \
   2.7–3 B headline models. Absolute quality numbers are weak; the evidence is the
   compression ON−OFF **delta** and the convergence **shape**.
 - **Loopback simulation (concerns 5 & 7).** Scalability and network numbers are a
-  single-box loopback simulation with `tc`/`netem` shaping — **not WAN**.
+  single-box loopback simulation with added-delay / packet-loss shaping
+  (`tc`/`netem` where the sandbox allows it, else an in-process shim) — **not WAN**.
   Absolute latency is optimistic; only the response *shape* is claimed.
 - **Small n.** n = 5 (concern 1) / n = 3 (concern 2); Student-t intervals are
   wide and flagged as such.

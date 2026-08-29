@@ -4,7 +4,9 @@ What was actually run on the packaging machine (Task 14), the exact commands, an
 their output. The Colab GPU work that **could not** be run here is listed at the
 bottom.
 
-- Repo: `reviewer-response-abhay-nikhil` @ `e66cd00`, clean tree, no remote.
+- Repo: `reviewer-response-abhay-nikhil`, clean tree, no remote. Dry-run first
+  captured at `e66cd00`; test counts below refreshed after the final-review fix
+  commit `29a89a3` (76 offline tests).
 - Python 3.12.7, Windows 11. (Colab Free ships 3.10/3.11 — see caveats.)
 
 ---

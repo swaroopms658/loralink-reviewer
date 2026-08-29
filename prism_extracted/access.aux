@@ -1,0 +1,111 @@
+\relax 
+\citation{hu2021lora}
+\citation{borzunov2023petals}
+\citation{lin2024splitlora}
+\citation{lin2025hsplitlora}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{}\protected@file@percent }
+\newlabel{sec:introduction}{{I}{1}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-A}}Motivation}{1}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-B}}Problem Statement}{1}{}\protected@file@percent }
+\citation{lin2018deep}
+\citation{ghiasvand2024communication}
+\citation{hu2021lora}
+\citation{tian2024hydralora}
+\citation{huh2024training}
+\citation{huang2019gpipe}
+\citation{lin2024splitlora}
+\citation{ma2024splitfrozen}
+\citation{zhang2024splitllm}
+\citation{li2025energy}
+\citation{borzunov2023petals}
+\citation{gao2024dlora}
+\citation{hou2025adaptive}
+\citation{lin2025hsplitlora}
+\citation{ramesh2025florist}
+\citation{wagner2024personalized}
+\citation{lin2018deep}
+\citation{ghiasvand2024communication}
+\citation{lin2025hsplitlora}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-C}}Proposed Framework}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {II}Background and Related Work}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-A}}Parameter-Efficient Fine-Tuning (PEFT)}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-B}}Pipeline Parallelism and Model Splitting}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-C}}Distributed and Collaborative Frameworks}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-D}}The Cross-Platform and Heterogeneity Gap}{2}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces The LoraLink distributed architecture, illustrating isolated memory management and data flow across heterogeneous nodes.\relax }}{3}{}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig1}{{1}{3}}
+\@writefile{toc}{\contentsline {section}{\numberline {III}System Architecture}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Communication Protocol}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Heterogeneous Resource Orchestration}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}1}Benchmarking Phase}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}2}Smart Partitioning Algorithm}{3}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces The sequence of operations during the benchmarking and smart partitioning initialization phase over the TCP stack.\relax }}{3}{}\protected@file@percent }
+\newlabel{fig2}{{2}{3}}
+\citation{hu2021lora}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces LoraLink: Hardware-Aware Partitioning and Execution\relax }}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Distributed LoRA State Management and Pipeline Engine}{4}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Distributed training loop demonstrating the network flow of compressed activations (forward pass) and gradients (backward pass).\relax }}{4}{}\protected@file@percent }
+\newlabel{fig3}{{3}{4}}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Implementation Details}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}LoRA Management and Background Adaptation Mechanics}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}N-Bit Quantization and Sparsity-Aware Compression}{5}{}\protected@file@percent }
+\newlabel{sec:compression}{{\mbox  {IV-B}}{5}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Distributed Weight Accumulation}{5}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces The distributed weight accumulation process, aggregating local LoRA matrices into a standardized Hugging Face adapter format.\relax }}{6}{}\protected@file@percent }
+\newlabel{fig4}{{4}{6}}
+\@writefile{toc}{\contentsline {section}{\numberline {V}Experimental Results \& Analysis}{6}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}Experimental Setup}{6}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Performance Metrics across Model Architectures (Topology A)\relax }}{6}{}\protected@file@percent }
+\newlabel{tab:training_results}{{1}{6}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-B}}Consolidated Performance and Efficiency Analysis}{6}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Pipeline scalability analysis (time versus worker nodes).\relax }}{7}{}\protected@file@percent }
+\newlabel{fig:scalability}{{5}{7}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Average network latency per batch across different configurations.\relax }}{7}{}\protected@file@percent }
+\newlabel{fig:latency}{{6}{7}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Gradient and activation compression ratios achieved per dataset.\relax }}{7}{}\protected@file@percent }
+\newlabel{fig:compression}{{7}{7}}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Additional pipeline overhead categorized by compression and decompression time.\relax }}{7}{}\protected@file@percent }
+\newlabel{fig:overhead}{{8}{7}}
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Average network bandwidth saved per cluster configuration.\relax }}{7}{}\protected@file@percent }
+\newlabel{fig:bandwidth}{{9}{7}}
+\@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces Convergence analysis: cross-entropy loss on the E2E NLG dataset.\relax }}{7}{}\protected@file@percent }
+\newlabel{fig:loss_e2e}{{10}{7}}
+\bibstyle{IEEEtran}
+\bibdata{references}
+\bibcite{hu2021lora}{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-C}}Comparative Analysis of Compression Impact}{8}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Compression Ablation: Perplexity, Weight Stability, and Throughput (Topology B)\relax }}{8}{}\protected@file@percent }
+\newlabel{tab:consolidated_results}{{2}{8}}
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Discussion}{8}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-A}}The Throughput Paradox and Network Efficiency}{8}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-B}}Weight Stability and Regularization Effects}{8}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {VII}Conclusion}{8}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{REFERENCES}{8}{}\protected@file@percent }
+\bibcite{borzunov2023petals}{2}
+\bibcite{lin2024splitlora}{3}
+\bibcite{lin2025hsplitlora}{4}
+\bibcite{lin2018deep}{5}
+\bibcite{ghiasvand2024communication}{6}
+\bibcite{tian2024hydralora}{7}
+\bibcite{huh2024training}{8}
+\bibcite{huang2019gpipe}{9}
+\bibcite{ma2024splitfrozen}{10}
+\bibcite{zhang2024splitllm}{11}
+\bibcite{li2025energy}{12}
+\bibcite{gao2024dlora}{13}
+\bibcite{hou2025adaptive}{14}
+\bibcite{ramesh2025florist}{15}
+\bibcite{wagner2024personalized}{16}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Extended Convergence Analysis}{10}{}\protected@file@percent }
+\newlabel{app:convergence}{{A}{10}}
+\@writefile{lof}{\contentsline {figure}{\numberline {11}{\ignorespaces Exhaustive convergence analysis demonstrating stable cross-entropy loss trajectories across all permutations of model architectures, datasets, and pipeline depths (cluster sizes). The consistency across 2-, 3-, and 4-node deployments confirms the structural integrity of the compressed gradient routing.\relax }}{10}{}\protected@file@percent }
+\newlabel{fig:grid_convergence}{{11}{10}}
+\@writefile{toc}{\contentsline {subsection}{S. Rajarajeswari}{11}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{R China Appala Naidu}{11}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{Chandrashekhar Byadgi}{11}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{C S Darshan}{11}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{Abhay Bhandarkar}{11}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{Nikhil Y N}{11}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{M S Swaroop}{11}{}\protected@file@percent }
+\gdef \@abspage@last{11}

@@ -1,0 +1,13 @@
+models/
+dataset/
+__pycache__/
+*.pyc
+lora_adapters/
+finetuned_model/
+coordinator_log_*.txt
+download_report.json
+.superpowers/
+loralink_reviewer_response/results/*.csv
+loralink_reviewer_response/figures/*
+loralink_reviewer_response/**/adapters/
+*.zip

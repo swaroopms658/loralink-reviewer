@@ -1,0 +1,577 @@
+\documentclass{ieeeaccess}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage{multirow}
+\usepackage{subcaption}
+\usepackage{stfloats}
+\usepackage{bm}
+
+\DeclareCaptionLabelFormat{accesslabel}{\textcolor{accessblue}{#1~#2}}
+\DeclareCaptionLabelSeparator{accesssep}{.\quad}
+\captionsetup[figure]{
+    name=FIGURE,
+    labelformat=accesslabel,
+    labelsep=accesssep,
+    font={footnotesize},
+    labelfont={sf,bf,color=accessblue},
+    textfont={sf,bf},
+    justification=raggedright,
+    singlelinecheck=false
+}
+\captionsetup[table]{
+    name=TABLE,
+    labelformat=accesslabel,
+    labelsep=accesssep,
+    font={footnotesize},
+    labelfont={sf,bf,color=accessblue},
+    textfont={sf},
+    justification=raggedright,
+    singlelinecheck=false
+}
+
+\makeatletter
+\AtBeginDocument{\DeclareMathVersion{bold}
+\SetSymbolFont{operators}{bold}{T1}{times}{b}{n}
+\SetSymbolFont{NewLetters}{bold}{T1}{times}{b}{it}
+\SetMathAlphabet{\mathrm}{bold}{T1}{times}{b}{n}
+\SetMathAlphabet{\mathit}{bold}{T1}{times}{b}{it}
+\SetMathAlphabet{\mathbf}{bold}{T1}{times}{b}{n}
+\SetMathAlphabet{\mathtt}{bold}{OT1}{pcr}{b}{n}
+\SetSymbolFont{symbols}{bold}{OMS}{cmsy}{b}{n}
+\renewcommand\boldmath{\@nomath\boldmath\mathversion{bold}}}
+\makeatother
+
+\sisetup{detect-all}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+\history{XXXX}
+\doi{XXXX}
+\vol{XXXX}
+\year{XXXX}
+\pubid{XXXX}
+
+\title{LoraLink: A Pipeline Parallelism Framework for Fine-Tuning LLMs on Heterogeneous Clusters}
+\author{\uppercase{S. Rajarajeswari}\authorrefmark{1},
+\uppercase{R China Appala Naidu}\authorrefmark{1},
+\uppercase{Chandrashekhar Byadgi}\authorrefmark{2},
+\uppercase{C S Darshan}\authorrefmark{1},
+\uppercase{Abhay Bhandarkar}\authorrefmark{1},
+\uppercase{Nikhil Y N}\authorrefmark{1},
+and \uppercase{M S Swaroop}\authorrefmark{1}}
+
+\address[1]{Department of Computer Science and Engineering, Ramaiah Institute of Technology, Bengaluru, India}
+\address[2]{Samsung R\&D Institute Bengaluru, Bengaluru, India}
+
+\markboth
+{Rajarajeswari \headeretal: LoraLink for Fine-Tuning LLMs on Heterogeneous Clusters}
+{Rajarajeswari \headeretal: LoraLink for Fine-Tuning LLMs on Heterogeneous Clusters}
+
+\corresp{Corresponding author: S. Rajarajeswari (e-mail: raji@msrit.edu).}
+
+\begin{abstract}
+Large language models (LLMs) have scaled to a point where fine-tuning them poses significant resource barriers for researchers lacking access to high-end GPU clusters. While Parameter-Efficient Fine-Tuning (PEFT) methods like Low-Rank Adaptation (LoRA) significantly reduce the number of trainable parameters, the memory requirements of base models still often exceed the capacity of consumer-grade hardware. To address this, we introduce LoraLink, a distributed fine-tuning framework designed for heterogeneous, cross-platform device clusters. Bypassing the need for OS-specific data center middleware, LoraLink utilizes a custom TCP-based communication protocol to enable dynamic pipeline parallelism seamlessly across Windows, macOS, and Linux systems. The framework employs a hardware-aware Smart Partitioning algorithm that dynamically distributes model layers based on real-time profiling of each node's computational throughput and memory limits. To mitigate the slow speeds of standard consumer networks, LoraLink uses a sparsity-aware gradient compression engine. Experimental results show that this compression approach accelerated overall training time by 2.4x and reduced average step latency by over 93\%. By preventing the transmission of over 646 MB of redundant data per task, LoraLink demonstrates that robust convergence and efficient LLM adaptation can be achieved by harnessing the collective compute of decentralized, commodity hardware.
+\end{abstract}
+
+\begin{keywords}
+Cross-platform systems, distributed training, heterogeneous systems, large language models, LoRA, pipeline parallelism.
+\end{keywords}
+
+\titlepgskip=-15pt
+\maketitle
+
+\section{Introduction}
+\label{sec:introduction}
+\PARstart{T}{he} prevailing paradigm in natural language processing relies on large-scale pre-training followed by task-specific adaptation. However, as model parameters scale into the hundreds of billions, full fine-tuning has become computationally and financially intractable for the broader research community. By injecting smaller trainable rank-decomposable matrices into the frozen transformer layers, Low-Rank Adaptation (LoRA) \cite{hu2021lora} drastically reduces the memory footprint of gradients and optimizer states.
+
+\subsection{Motivation}
+There is a need for distributed memory strategies since modern LLMs can easily overwhelm commodity hardware, even with parameter-efficient techniques like LoRA. Existing conventional distributed techniques (e.g., DeepSpeed, FSDP) are engineered for high-performance computing environments, which require homogeneous GPU clusters, leverage high-bandwidth interconnects (e.g., NVLink), and require communication libraries such as NCCL that are highly Linux-centric. In reality, most practitioners have access to commodity hardware with varying configurations of different CPUs, discrete GPUs, and operating systems.
+
+\subsection{Problem Statement}
+Existing distributed training paradigms lack the capability to utilize heterogeneous topologies. Petals \cite{borzunov2023petals} is a collaborative swarm that decentralizes inference, but it does not possess the deterministic, granular resource orchestration required for secure fine-tuning locally. The recent frameworks, SplitLoRA \cite{lin2024splitlora} and HSplitLoRA \cite{lin2025hsplitlora}, split models across clients and servers, yet they do not address issues with the compatibility of protocols like NCCL on Windows devices and network capabilities, which hinder the integration of consumer hardware for training.
+
+\subsection{Proposed Framework}
+To overcome these barriers, we propose \textbf{LoraLink}, a distributed fine-tuning framework that uses dynamic pipeline parallelism across heterogeneous device clusters. The architectural and methodological contributions of the framework are:
+
+\begin{itemize}
+    \item \textbf{Cross-Platform Network Stack:} To circumvent OS-specific middleware, we developed a custom raw TCP-based communication protocol, allowing devices running different operating systems (Windows, macOS, and Linux) to be part of training without relying on protocols like MPI or NCCL that have strict compatibility requirements.
+    \item \textbf{Smart Partitioning Algorithm:} We introduce a resource-aware orchestration scheduler. By executing real-time benchmarking of node-specific computational throughput (TFLOPS) and memory capacity, the algorithm dynamically balances layer distribution across highly heterogeneous compute profiles.
+    \item \textbf{Versatility of Architecture:} Model abstractions are used by LoraLink to provide a uniform distributed pipeline for advanced transformer models such as GPT-Neo, Qwen, and Phi.
+    \item \textbf{Compression-Based Throughput:} We introduce an aggressive and sparsity-aware compression algorithm to address the extreme latency issues in consumer-grade networks such as WiFi, taking motivation from Deep Gradient Compression \cite{lin2018deep} and tensorized federated tuning \cite{ghiasvand2024communication}.
+\end{itemize}
+
+Through this combination of concepts, researchers can utilize LoraLink to tune cutting-edge models on commodity decentralized devices, thus avoiding out-of-memory errors and platform compatibility issues.
+
+\section{Background and Related Work}
+
+\subsection{Parameter-Efficient Fine-Tuning (PEFT)}
+As the parameter scale of large language models expands into the hundreds of billions, traditional full-parameter fine-tuning has become computationally prohibitive. Low-Rank Adaptation (LoRA) \cite{hu2021lora} has emerged as a cornerstone PEFT methodology, exploiting the hypothesis that task-specific weight updates possess a low intrinsic dimension. By injecting trainable rank-decomposition matrices while freezing the pre-trained weights, LoRA significantly mitigates the memory overhead required for gradients and optimizer states. Recent works that focus on architectural advancements, such as HydraLoRA \cite{tian2024hydralora}, target domain-specific adaptation inefficiencies by introducing an asymmetric structure, and LoRA-the-Explorer \cite{huh2024training} utilizes parallel low-rank heads for training from scratch. While these algorithmic innovations have expanded the paradigm, the bottleneck caused by the volume of the static base model still exists, preventing execution on a single consumer-grade device.
+
+\subsection{Pipeline Parallelism and Model Splitting}
+To overcome the memory limits of a single device, the transformer architecture is partitioned in parallel across distributed nodes. GPipe \cite{huang2019gpipe} pioneered pipeline parallelism with microbatches to enable massive models by dividing the batches and leveraging layer distribution. This paradigm has been adapted into split frameworks tailored for LLMs; SplitLoRA \cite{lin2024splitlora} performs primary computation on a centralized server.
+
+There are research efforts that target resource-constrained devices. SplitFrozen \cite{ma2024splitfrozen} works by freezing device-side layers to reduce local computation. On the other hand, SplitLLM \cite{zhang2024splitllm} proposes hierarchical splitting schemas over wireless edge networks. Another such system that targets energy efficiency for split learning \cite{li2025energy} optimizes ``cut layer'' selection to minimize power consumption. These systems are designed specifically for a homogeneous client-server topology, with little focus on complexities in dynamic routing and flexible peer-to-peer clusters with asymmetric consumer hardware.
+
+\subsection{Distributed and Collaborative Frameworks}
+The shift toward democratizing LLM training led to collaborative swarms such as Petals \cite{borzunov2023petals}, which allow practitioners to join public, decentralized networks for inference and fine-tuning. Similarly, the federated learning community has made progress and developed robust methodologies that emphasize data flow and heterogeneous systems. DLoRA \cite{gao2024dlora} provides a protocol for cloud and device-side workload balancing. Adaptive Federated LoRA \cite{hou2025adaptive} and HSplitLoRA \cite{lin2025hsplitlora} address the theory and convergence implications of computational asymmetry. FLoRIST \cite{ramesh2025florist} leverages singular value thresholding. To enhance throughput in decentralized settings, personalized collaborative schemas \cite{wagner2024personalized} employ trust-weighted gradient aggregation to manage non-IID data distributions.
+
+\subsection{The Cross-Platform and Heterogeneity Gap}
+Despite the progress and innovations in algorithms, communication overhead is a bottleneck in distributed training environments. Techniques like Deep Gradient Compression \cite{lin2018deep} and tensorized aggregation \cite{ghiasvand2024communication} are crucial in standard consumer networks to maintain viability. Most distributed frameworks (e.g., DeepSpeed, FSDP) and specialized split learning rely on specific middleware like NCCL or GLOO, which require strict homogeneous GPU clusters and lack native Windows support on consumer devices, leading to a critical infrastructural void.
+
+While current literature provides a strong theoretical foundation for heterogeneous adaptation \cite{lin2025hsplitlora}, there exists a distinct lack of a framework that: 1) provides a unified architecture registry capable of orchestrating diverse models (e.g., GPT-Neo, Qwen, Phi) in a single pipeline; and 2) enables truly cross-platform execution (Windows/Linux/macOS) via a raw, dependency-free network protocol. LoraLink explicitly bridges this gap, fusing hardware-aware dynamic partitioning with a platform-agnostic TCP communication stack.
+
+\section{System Architecture}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{fig1}
+    \caption{The LoraLink distributed architecture, illustrating isolated memory management and data flow across heterogeneous nodes.}
+    \label{fig1}
+\end{figure}
+
+The architecture of LoraLink, as illustrated in Fig. \ref{fig1}, systematically mitigates the constraints of asymmetric compute topologies. By decoupling the model into a modular pipeline orchestrated via a platform-agnostic network stack, the framework enables robust, scalable LLM fine-tuning tailored for decentralized industrial applications, bypassing the need for centralized high-performance clusters.
+
+\subsection{Communication Protocol}
+To break the dependency on data-center-centric communication libraries (e.g., NCCL, Gloo) that strictly enforce homogeneous hardware and lack native Windows support, LoraLink deploys a custom, OS-agnostic messaging protocol over raw TCP \texttt{SOCK\_STREAM} sockets. This allows seamless pipeline execution across disparate consumer operating systems (Windows, Linux, macOS) over standard LAN or wireless networks.
+
+The communication protocol implements strict packet framing to avoid message fragmentation across volatile network flows. By means of deterministic buffer management, serialized messages consist of a variable-length payload marked by a 4-byte integer, followed by a header and metadata. This fixed structural format ensures that compressed tensors, batch IDs, and scaling values remain perfectly aligned upon arrival. While timeout mechanisms handle routine network latency, the dynamic reconfiguration of the distributed pipeline during hard node failures remains an area for future research.
+
+\subsection{Heterogeneous Resource Orchestration}
+For effective load balancing within an asymmetric cluster, it is essential to dynamically map the computation power available at each worker node. LoraLink employs a centralized orchestration approach to benchmark and partition the pipeline before initialization.
+
+\subsubsection{Benchmarking Phase}
+Each newly connected worker node automatically executes a localized computational benchmark based on matrix multiplication:
+\begin{equation}
+TFLOPS = \frac{2d^3}{t_{avg} \times 10^{12}}
+\end{equation}
+where $d$ represents the target matrix dimension, $2d^3$ dictates the total floating-point operations for $d \times d$ matrices, and $t_{avg}$ is the average execution time. This establishes a normalized, hardware-agnostic scalar for computational throughput across CPUs and GPUs.
+
+\subsubsection{Smart Partitioning Algorithm}
+The coordinator utilizes a memory-aware, greedy partitioning strategy to map transformer layers to specific nodes. To prevent out-of-memory failures on consumer hardware, the algorithm calculates the strictly usable memory $U_i$ for node $i$ based on its hardware accelerator type:
+\begin{equation}
+U_i = \begin{cases}
+M_i \times 0.70 & \text{if CUDA} \\
+\max(0, M_i - 5.0) \times 0.60 & \text{if CPU}
+\end{cases}
+\end{equation}
+where $M_i$ is the total detected physical memory (VRAM or RAM). Layers are subsequently assigned to maximize cluster utility while strictly enforcing that no node exceeds its safe threshold. The maximum layer capacity $C_i$ is computed as:
+\begin{equation}
+C_i = \left\lfloor \frac{U_i - S_{overhead}}{S_{layer}} \right\rfloor
+\end{equation}
+
+\begin{algorithm}[t]
+\caption{LoraLink: Hardware-Aware Partitioning and Execution}
+\small
+\begin{algorithmic}[1]
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\REQUIRE Model layers $L$, Nodes $\mathcal{N}$, Sparsity $\rho$, Quantization bits $N$
+\vspace{0.15cm}
+
+\STATE \textbf{// Phase 1: Profiling \& Greedy Partitioning}
+\FOR{each node $n_i \in \mathcal{N}$}
+    \STATE $TFLOPS_i \gets \frac{2d^3}{t_{avg} \times 10^{12}}$ \COMMENT{Eq. 1}
+    \STATE $U_i \gets \text{SafeMemoryBound}(M_i, \text{type}_i)$ \COMMENT{Eq. 2}
+    \STATE $C_i \gets \lfloor (U_i - S_{overhead}) / S_{layer} \rfloor$ \COMMENT{Eq. 3}
+\ENDFOR
+\STATE Sort $\mathcal{N}$ in descending order by $TFLOPS_i$
+\STATE $L_{rem} \gets L$ \COMMENT{Remaining layers to assign}
+\FOR{each node $n_i \in \mathcal{N}_{sorted}$}
+    \STATE $A_i \gets \min(C_i, L_{rem})$ \COMMENT{Greedy layer allocation}
+    \STATE Assign $A_i$ layers to $n_i$, allocate local LoRA rank $r_i$
+    \STATE $L_{rem} \gets L_{rem} - A_i$
+    \IF{$L_{rem} == 0$}
+        \STATE \textbf{break}
+    \ENDIF
+\ENDFOR
+\IF{$L_{rem} > 0$}
+    \STATE \textbf{abort} ``OOM Risk: Insufficient Cluster Memory''
+\ENDIF
+\vspace{0.15cm}
+
+\STATE \textbf{// Phase 2: Pipelined Execution with Compression}
+\WHILE{training}
+    \FOR{each active node $n_i$ in pipeline}
+        \STATE \textit{Local Compute:} $X_{out} \gets WX_{in} + \frac{\alpha}{r_i}B_i(A_i X_{in})$ and cache $X_{in}$
+        \STATE \textit{Sparsify \& Quantize:} $X_q \gets \text{Quantize}_N(X_{out} \odot M_{\rho}, S)$
+        \STATE Transmit $X_q$ via TCP to $n_{i+1}$
+    \ENDFOR
+    \STATE Terminal node computes cross-entropy loss $\mathcal{L}$ (Eq. 4)
+    \STATE Reverse flow: Compute $\nabla A_i, \nabla B_i$ via cached $X_{in}$, update local weights, and transmit $\nabla X_{in}$
+\ENDWHILE
+\vspace{0.15cm}
+
+\STATE \textbf{// Phase 3: Distributed Weight Synthesis}
+\FOR{each active node $n_i$}
+    \STATE Extract local $A_i, B_i$ matrices
+    \STATE Format dictionary keys to PEFT standard conventions
+\ENDFOR
+\STATE Coordinator aggregates dictionaries in CPU RAM
+\STATE Export \texttt{adapter\_model.bin} and \texttt{adapter\_config.json}
+\end{algorithmic}
+\end{algorithm}
+
+According to the above formulation, the time complexity of the greedy partitioning step is $\mathcal{O}(N \log N)$ due to the sorting of nodes, making orchestration overhead insignificant compared to the training process. The chronology of this initialization handshake---from hardware profiling to the deployment of discrete layer maps---is illustrated in Fig. \ref{fig2}.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{fig2}
+    \caption{The sequence of operations during the benchmarking and smart partitioning initialization phase over the TCP stack.}
+    \label{fig2}
+\end{figure}
+
+\subsection{Distributed LoRA State Management and Pipeline Engine}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{fig3}
+    \caption{Distributed training loop demonstrating the network flow of compressed activations (forward pass) and gradients (backward pass).}
+    \label{fig3}
+\end{figure}
+
+Unlike traditional distributed frameworks that require nodes to load the entire model graph before partitioning, LoraLink utilizes a ``lazy-loading empty shell'' paradigm to conserve constrained RAM and VRAM. Once the coordinator dispatches the layer configuration, each worker locally instantiates only its assigned subset of transformer layers on a zero-memory \texttt{meta} device. Only the specific base weights corresponding to the assigned global layers are loaded into memory and immediately frozen, allowing the local LoRA manager to operate exclusively within this isolated namespace.
+
+The execution engine facilitates the sequential flow of data, leveraging a pipeline parallelism pattern depicted in Fig. \ref{fig3}. During the forward pass, node $i$ receives activations $X_{in}$ from its predecessor via TCP, computes $X_{out} = F_i(X_{in})$ through its localized frozen layers and trainable adapters, and forwards the compressed tensor to node $i+1$.
+
+To enable decentralized weight updates without network-saturating global synchronization, LoraLink implements a state-isolated caching mechanism. Each node preserves $X_{in}$ in a thread-safe local cache mapped to a unique micro-batch identifier. At the terminal node, the final activations are projected to the vocabulary space, and causal language modeling loss is calculated via cross-entropy:
+
+\begin{equation}
+\mathcal{L} = - \frac{1}{B \times T} \sum_{b,t} \log \left( \frac{\exp(z_{b,t,y_{b,t}})}{\sum_v \exp(z_{b,t,v})} \right)
+\end{equation}
+
+Calculating the derivatives of the loss with respect to the output activations kicks off the reverse pipeline process. Crucially, as gradients ($\nabla X_{out}$) flow upstream via the custom socket protocol, each node retrieves its cached $X_{in}$ to compute local partial derivatives for its specific $A_i$ and $B_i$ LoRA matrices. It executes a localized optimizer step immediately before compressing and passing the remaining gradients back to node $i-1$.
+
+\section{Implementation Details}
+
+LoraLink's implementation focuses on maximizing commodity hardware utilization by combining isolated memory management, dynamic graph modification, and a multi-stage compression pipeline tailored for scalable industrial applications.
+
+\subsection{LoRA Management and Background Adaptation Mechanics}
+The framework manages local adaptation through a highly modular injection system that intercepts standard linear transformations without requiring structural rewrites of the underlying transformer classes.
+
+Once a node loads its assigned frozen layers, the \texttt{LoRAManager} iterates through the local neural network modules to identify specific linear targets designated for adaptation (e.g., \texttt{q\_proj}, \texttt{k\_proj}, \texttt{v\_proj}, and \texttt{o\_proj} for attention blocks). For every identified target module, the manager bypasses traditional subclassing by implementing dynamic monkey-patching. Following the standard Low-Rank Adaptation formulation \cite{hu2021lora}, the pre-trained weights $W$ are frozen, and two trainable low-rank matrices, $A$ and $B$, are injected into the specific layer block as \texttt{nn.Parameter} objects.
+
+To maintain the pretrained baseline at initialization, the framework utilizes Kaiming-Uniform initialization for matrix $A$ (providing a non-zero input to ensure gradient flow) and strictly zero-initializes matrix $B$. In the background, the state of these localized adapters is maintained using a lightweight record structure (the \texttt{\_LoRAAdapter} tuple). This record stores:
+\begin{enumerate}
+    \item A reference to the parent transformer block.
+    \item The localized parameter prefix (e.g., \texttt{attn.attention.q\_proj}).
+    \item The specific $A$ and $B$ tensors.
+    \item The computed scaling factor ($\alpha / r$).
+\end{enumerate}
+
+This localized tracking is critical for the framework's decentralized nature. To optimize resource utilization across asymmetric hardware, LoraLink dynamically assigns the local rank $r_i$ based on the node's detected memory $M_i$:
+\begin{equation}
+r_i = \begin{cases}
+4 & \text{if } M_i < 8 \text{ GB} \\
+8 & \text{if } 8 \le M_i < 16 \text{ GB} \\
+16 & \text{if } M_i \ge 16 \text{ GB}
+\end{cases}
+\end{equation}
+
+Unlike traditional data parallelism, which relies on gradient averaging through all-reduce, LoraLink enforces strict state isolation. Each node maintains its own independent \texttt{LoRAManager} and \texttt{AdamW} optimizer instance. Optimizer states for the local low-rank matrices are never transmitted across the network. This geographic isolation of parameters ensures that the only data traversing the TCP sockets are compressed activations and gradients, while the memory-heavy learning state remains entirely local to the node's VRAM or RAM.
+
+\subsection{N-Bit Quantization and Sparsity-Aware Compression}
+\label{sec:compression}
+In order to resolve the latency bottleneck brought on by standard consumer interconnects (e.g., traditional WiFi) and make efficient use of the connection speed, LoraLink uses a multi-stage, sparsity-aware compression engine.
+
+First, the engine applies magnitude-based sparsification to the gradient tensor $X$. A binary mask $M$ is generated to retain only the top $k$ elements, determined by the target sparsity ratio $\rho$:
+\begin{equation}
+k = \max(1, \lfloor |X| \times (1 - \rho) \rfloor)
+\end{equation}
+where $|X|$ is the total number of elements in the tensor, and $\rho$ dictates the percentage of data to discard.
+
+Next, the sparsified tensor undergoes generalized $N$-bit quantization. Let $Q_{max} = 2^{N-1} - 1$ and $Q_{min} = -2^{N-1}$, where $N$ represents the chosen target bit-width (e.g., 4-bit, 8-bit). A dynamic scaling factor $S$ is calculated based on the 99.9th percentile of all absolute values:
+\begin{equation}
+S = \frac{P_{99.9}(|X|)}{Q_{max}}
+\end{equation}
+\begin{equation}
+X_q = \max \left( Q_{min}, \min \left( Q_{max}, \left\lfloor \frac{X}{S} \right\rceil \right) \right)
+\end{equation}
+where:
+\begin{itemize}
+    \item $P_{99.9}(|X|)$ ignores the top 0.1\% of extreme values, preventing massive outlier gradients from skewing the representational range of the quantized distribution.
+    \item $Q_{max}$ and $Q_{min}$ represent the strict numerical boundaries of the target $N$-bit signed integer.
+    \item $\lfloor \cdot \rceil$ indicates rounding to the nearest whole integer.
+\end{itemize}
+
+As deep learning gradients are natively represented as 32-bit floating-point tensors, their raw transmission over constrained consumer networks incurs prohibitive serialization and network latencies. By discarding mathematically redundant data via the sparsity mask and compressing the retained values into compact $N$-bit integers, the framework drastically reduces the total network payload size, accelerating distributed training throughput without relying on dedicated high-bandwidth interconnects.
+
+\subsection{Distributed Weight Accumulation}
+Because model shards are trained locally across independent memory namespaces, the coordinator must eventually synthesize the localized matrices into a unified global adapter. Upon training completion, the coordinator broadcasts a synchronization signal, as detailed in Fig. \ref{fig4}.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{fig4}
+    \caption{The distributed weight accumulation process, aggregating local LoRA matrices into a standardized Hugging Face adapter format.}
+    \label{fig4}
+\end{figure}
+
+Each worker gets access to the $A$ and $B$ matrices stored locally. Because each node only knows about its internal layer indices (e.g., local layers 0 to 7), the \texttt{LoRAManager} maps these local object identities back to their global layer indices using the configuration provided by the coordinator during initialization. For interoperability purposes with the outside world, this mapping allows the localized records to automatically generate strict Parameter-Efficient Fine-Tuning compliant dictionary keys using the following string template:
+
+\begin{center}
+\small\texttt{base\_model.model.[prefix].[L].[module].\allowbreak lora\_[A/B].default.weight}
+\end{center}
+
+All these string-tensor pairs are aggregated into a consolidated state inside CPU memory. At the end, the coordinator saves a binary file \texttt{adapter\_model.bin} and a corresponding \texttt{adapter\_config.json}, making it possible to utilize distributed training results inside the Hugging Face ecosystem. This final phase transforms the geographically isolated adapters from a series of autonomous pipeline stages into a unified, mathematically continuous model. By using standardized PEFT string templates, LoraLink ensures that the distributed nature of the training process is completely transparent, allowing the final adapter to be deployed effortlessly.
+
+\section{Experimental Results \& Analysis}
+
+In this section, we evaluate the empirical performance of the LoraLink framework across multiple modern transformer architectures and instructional datasets. We systematically analyze pipeline scalability, communication overhead, and convergence stability within highly heterogeneous topologies.
+
+\subsection{Experimental Setup}
+To rigorously evaluate the framework, we provisioned two distinct hardware topologies to isolate specific performance metrics:
+\begin{itemize}
+    \item \textbf{Topology A (Scalability \& Capability):} To simulate an extreme asymmetric consumer environment, the centralized coordinator was a CPU-only desktop (Intel Core i5-12400, 16 GB RAM), orchestrating up to four heterogeneous Google Colab instances equipped with NVIDIA T4 GPUs. To artificially stress-test pipeline scalability and network serialization overhead, the partitioning algorithm was constrained to assign a minimum of one transformer layer to every active device, forcing continuous network utilization regardless of hardware disparities.
+    \item \textbf{Topology B (Compression Ablation):} For the controlled evaluation of the compression engine (Section~\ref{sec:compression}), the topology was isolated to a two-node cluster consisting of symmetric NVIDIA Tesla T4 GPUs (one coordinator, one worker). This isolated the network transmission variables to precisely measure the trade-off between tensor sparsification compute costs and raw network latency.
+\end{itemize}
+
+To achieve a consistent evaluation, we standardized the training procedure by executing each distributed run for one epoch and 100 mini-batches. This helps evaluate the convergence of LoRA adapters while eliminating bias from variable dataset lengths.
+
+\begin{table}[htbp]
+\centering
+\caption{Performance Metrics across Model Architectures (Topology A)}
+\label{tab:training_results}
+\resizebox{\columnwidth}{!}{
+\begin{tabular}{@{}llcSSSSS@{}}
+\toprule
+\textbf{Model} & \textbf{Dataset} & \textbf{Worker} & \textbf{Time} & \textbf{Avg.} & \textbf{Comp.} & \textbf{BW Sav.} & \textbf{Total} \\
+\textbf{Arch.} & & \textbf{Nodes} & \textbf{(min)} & \textbf{Lat.(s)} & \textbf{Ratio} & \textbf{(GB)} & \textbf{Ov.(s)} \\ \midrule
+
+\multirow{9}{*}{\shortstack[l]{GPT Neo\\2.7B}}
+ & Dolly & 2 & 49.00 & 6.36 & 11.45 & 0.73 & 36.66 \\
+ & Dolly & 3 & 86.00 & 7.77 & 7.99 & 1.02 & 56.23 \\
+ & Dolly & 4 & 116.00 & 7.70 & 7.19 & 1.30 & 76.80 \\ \cmidrule(lr){2-8}
+ & E2E & 2 & 40.00 & 5.14 & 9.43 & 0.76 & 35.87 \\
+ & E2E & 3 & 71.00 & 6.32 & 8.21 & 1.06 & 55.93 \\
+ & E2E & 4 & 109.00 & 7.56 & 7.75 & \textbf{1.37} & 74.15 \\ \cmidrule(lr){2-8}
+ & Wiki & 2 & 44.00 & 5.48 & 17.15 & 0.75 & 35.88 \\
+ & Wiki & 3 & 68.00 & 6.16 & 14.77 & 1.05 & 55.86 \\
+ & Wiki & 4 & 107.00 & 7.40 & 12.50 & 1.35 & 75.49 \\ \midrule
+
+\multirow{9}{*}{\shortstack[l]{Phi 1.5\\1.3B}}
+ & Dolly & 2 & 32.00 & 4.56 & 8.59 & 0.47 & 30.74 \\
+ & Dolly & 3 & 67.00 & 6.11 & 9.03 & 0.70 & 47.16 \\
+ & Dolly & 4 & 91.00 & 6.40 & 8.93 & 0.93 & 64.03 \\ \cmidrule(lr){2-8}
+ & E2E & 2 & 36.00 & 4.78 & 10.47 & 0.49 & 30.19 \\
+ & E2E & 3 & 66.00 & 6.07 & 10.67 & 0.72 & 46.15 \\
+ & E2E & 4 & 101.00 & 7.12 & 10.70 & 0.97 & 60.48 \\ \cmidrule(lr){2-8}
+ & Wiki & 2 & \textbf{33.00} & \textbf{4.42} & 17.55 & 0.48 & 30.62 \\
+ & Wiki & 3 & 61.00 & 5.68 & \textbf{18.34} & 0.72 & 45.92 \\
+ & Wiki & 4 & 87.00 & 6.15 & 18.25 & 0.96 & 61.90 \\ \midrule
+
+\multirow{9}{*}{\shortstack[l]{Qwen 2.5\\3B}}
+ & Dolly & 2 & 40.00 & 4.83 & 5.57 & 0.45 & 31.14 \\
+ & Dolly & 3 & 76.00 & 6.87 & 5.40 & 0.67 & 47.91 \\
+ & Dolly & 4 & 96.00 & 6.62 & 5.38 & 0.89 & 63.26 \\ \cmidrule(lr){2-8}
+ & E2E & 2 & 39.00 & 4.86 & 6.13 & 0.46 & 30.48 \\
+ & E2E & 3 & 79.00 & 7.17 & 6.01 & 0.69 & 48.52 \\
+ & E2E & 4 & 115.00 & 7.97 & 6.10 & 0.91 & 65.61 \\ \cmidrule(lr){2-8}
+ & Wiki & 2 & 40.00 & 4.60 & 6.56 & 0.46 & 30.73 \\
+ & Wiki & 3 & 70.00 & 6.27 & 6.07 & 0.69 & 47.08 \\
+ & Wiki & 4 & 104.00 & 7.11 & 5.51 & 0.90 & 63.92 \\ \bottomrule
+\end{tabular}
+}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\columnwidth]{fig5.pdf}
+    \caption{Pipeline scalability analysis (time versus worker nodes).}
+    \label{fig:scalability}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\columnwidth]{fig6.pdf}
+    \caption{Average network latency per batch across different configurations.}
+    \label{fig:latency}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\columnwidth]{fig7.pdf}
+    \caption{Gradient and activation compression ratios achieved per dataset.}
+    \label{fig:compression}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\columnwidth]{fig8.pdf}
+    \caption{Additional pipeline overhead categorized by compression and decompression time.}
+    \label{fig:overhead}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\columnwidth]{fig9.pdf}
+    \caption{Average network bandwidth saved per cluster configuration.}
+    \label{fig:bandwidth}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\columnwidth]{fig10.pdf}
+    \caption{Convergence analysis: cross-entropy loss on the E2E NLG dataset.}
+    \label{fig:loss_e2e}
+\end{figure}
+
+\subsection{Consolidated Performance and Efficiency Analysis}
+As delineated in Table \ref{tab:training_results}, LoraLink successfully orchestrated the fine-tuning of parameter-heavy models, such as \textbf{GPT-Neo 2.7B} (which natively requires approximately 10 GB VRAM), on hardware that would otherwise strictly trigger out-of-memory exceptions. The dynamic memory allocation maintained VRAM utilization safely below the 70\% constraint across all configurations.
+
+While total execution time scaled linearly with node count due to the forced multi-hop pipeline constraints (see Fig. \ref{fig:scalability}), the average network latency per batch remained highly stable. The \textbf{Phi 1.5} architecture achieved an optimal minimum latency of \textbf{4.42 s}. This stability is directly attributable to the custom TCP protocol and the integrated compression engine, which yielded a peak compression ratio of \textbf{18.34$\times$} for Phi 1.5 on the WikiText-2 dataset. As illustrated in Fig. \ref{fig:compression}, compression efficacy was maximized on the WikiText dataset uniformly across all tested architectures.
+
+The framework drastically mitigated communication bottlenecks, preventing up to \textbf{1.37 GB} of network saturation for GPT-Neo in a 4-node deployment. Examining the pipeline overhead in Fig. \ref{fig:overhead}, the systemic costs are heavily impacted by \textbf{compression time}, making \textbf{decompression time} negligible, and this overhead does not compromise model integrity. As demonstrated by the E2E NLG convergence trajectory in Fig. \ref{fig:loss_e2e}, the models exhibited stable loss descent, with \textbf{Qwen 2.5} demonstrating the most aggressive initial convergence rate. For an exhaustive visualization of convergence across all datasets and cluster sizes, please refer to Appendix \ref{app:convergence}.
+
+\subsection{Comparative Analysis of Compression Impact}
+To systematically quantify the trade-off between communication efficiency and representational quality, we conducted controlled ablations using Topology B (the symmetric 2-node Colab T4 cluster). We executed fine-tuning on the \textbf{GPT-Neo 2.7B} model across three target datasets (WikiText-2, Dolly-15k, and E2E NLG) under two discrete network conditions: raw uncompressed transmission versus sparsity-aware compression. By analyzing the resultant LoRA weight norms and measuring task-specific perplexity ($\Delta$PPL), we empirically quantified the precision cost required to achieve our \textbf{2.4$\times$} throughput acceleration.
+
+\begin{table}[htbp]
+\centering
+\caption{Compression Ablation: Perplexity, Weight Stability, and Throughput (Topology B)}
+\label{tab:consolidated_results}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}llccSSSSS@{}}
+\toprule
+\textbf{Dataset} & \textbf{Comp.} & \textbf{Avg. A} & \textbf{Avg. B} & \textbf{Avg. Step Latency} & \textbf{Data} & \textbf{Saved} & \textbf{Time} & \textbf{PPL $\Delta$} \\
+& \textbf{Mode} & \textbf{Norm} & \textbf{Norm} & \textbf{(s)} & \textbf{(MB)} & \textbf{(MB)} & \textbf{(min)} & \textbf{(\%)} \\ \midrule
+
+\multirow{2}{*}{WikiText-2}
+ & Disabled & 1.6462 & 0.1369 & 24.0838 & 500.1953 & 0.0000 & 85.00 & -0.4415 \\
+ & \textbf{Enabled} & \textbf{1.6545} & \textbf{0.1492} & \textbf{8.3810} & \textbf{174.2228} & \textbf{325.9726} & \textbf{34.00} & \textbf{-0.3555} \\ \cmidrule(lr){2-9}
+
+\multirow{2}{*}{Dolly-15k}
+ & Disabled & 1.6470 & 0.1336 & 24.0760 & 1000.3906 & 0.0000 & 82.00 & -0.1251 \\
+ & \textbf{Enabled} & \textbf{1.6562} & \textbf{0.1410} & \textbf{8.5649} & \textbf{353.4377} & \textbf{646.9529} & \textbf{31.00} & \textbf{+0.7625} \\ \cmidrule(lr){2-9}
+
+\multirow{2}{*}{E2E NLG}
+ & Disabled & 1.6574 & 0.1723 & 24.0847 & 750.3906 & 0.0000 & 81.00 & -2.0220 \\
+ & \textbf{Enabled} & \textbf{1.6763} & \textbf{0.1892} & \textbf{1.5300} & \textbf{155.0653} & \textbf{595.3253} & \textbf{32.00} & \textbf{-2.0910} \\ \bottomrule
+\end{tabular}%
+}
+\end{table}
+
+As summarized in Table \ref{tab:consolidated_results}, the LoraLink compression engine drastically reduces network saturation, preventing the transmission of over \textbf{646.95 MB} of redundant gradients on the Dolly-15k dataset. The tensor sparsification maintains the structural integrity of the localized adapters, as the Frobenius norms of matrices $A$ and $B$ remain bounded across both modes.
+
+The aggressive 8-bit quantization introduced perplexity degradation of \textbf{0.7625\%} when trained on general instructional tasks using Dolly-15k; on the other hand, it was beneficial by improving the perplexity delta by \textbf{0.0690\%} on the E2E NLG task. The throughput paradox is mathematically validated in these results. Though computationally expensive, the compression \textbf{reduced} the average step latency by \textbf{93.6\%} on E2E NLG. This proves that within standard network topologies, the added cost of CPU-bound tensor sparsification is superseded by the latency penalties of serializing and transmitting uncompressed 32-bit floats.
+
+\section{Discussion}
+
+\subsection{The Throughput Paradox and Network Efficiency}
+The most salient finding through our empirical evaluation is the throughput paradox: even with the computational overhead induced by localized tensor sparsification, the system achieved a major reduction in average step latency. For the E2E NLG task, step latency decreased from \textbf{24.08 s} to \textbf{1.53 s}. The \textbf{93.6\%} reduction indicates that within standard network topologies, CPU-bound compression overhead is superseded by the network serialization penalties of transmitting uncompressed 32-bit gradients. This efficiency accelerated the training time by \textbf{2.4$\times$}, reducing execution from \textbf{81--85 minutes} to \textbf{31--34 minutes} across all evaluated datasets.
+
+\subsection{Weight Stability and Regularization Effects}
+A primary theoretical concern while deploying lossy gradient compression was the risk of representational divergence. However, through our evaluation of the post-training diagnostics, the Frobenius norms of the adaptation matrices (\textbf{A} and \textbf{B}) remained structurally bounded, with the A-norm isolated within a tight distribution of \textbf{1.64 to 1.67} independent of the compression mode. While aggressive quantization precipitated a marginal \textbf{0.76\%} perplexity degradation on the generalized Dolly-15k task, the E2E NLG task exhibited a superior perplexity delta under compression (\textbf{-2.09\%} versus \textbf{-2.02\%}). This empirically suggests that sparsity-aware quantization can occasionally function as an implicit regularizer, proactively pruning stochastic gradient noise during highly structured language generation tasks.
+
+\section{Conclusion}
+
+Our work introduces \textit{LoraLink}, a novel distributed framework establishing a scalable paradigm for the democratization of LLM fine-tuning. By orchestrating complex transformer architectures across asymmetric compute topologies, the proposed system successfully circumvents rigid static memory constraints (e.g., the standard 10 GB VRAM floor) via a mathematically guaranteed, hardware-aware smart partitioning algorithm. Furthermore, by discarding OS-dependent middleware in favor of a custom, raw TCP protocol, LoraLink proves that cross-platform pipeline execution across disparate Windows and Linux ecosystems is both viable and highly efficient.
+
+By synthesizing this custom network stack with an optimized compression engine, LoraLink achieved peak bandwidth savings of over \textbf{646.95 MB} per task and a \textbf{2.4$\times$} acceleration in global training throughput. Ultimately, these results demonstrate that state-of-the-art PEFT adaptation no longer mandates exclusive reliance on homogeneous data-center infrastructure. LoraLink successfully bridges this infrastructural gap, empowering researchers to harness the latent, collective compute of ubiquitous commodity hardware.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\clearpage
+\appendices
+
+\section{Extended Convergence Analysis}
+\label{app:convergence}
+To rigorously validate that LoraLink's multi-hop pipeline parallelism does not degrade model convergence, we conducted an extended empirical analysis. Figure \ref{fig:grid_convergence} presents the complete matrix of cross-entropy loss trajectories across all evaluated architectures (GPT-Neo, Phi 1.5, Qwen 2.5), target datasets, and cluster sizes (2, 3, and 4 nodes).
+
+The uniformity of the convergence curves across varying node counts mathematically validates that our custom TCP fragmentation and atomic packet structuring successfully prevent gradient de-synchronization, regardless of pipeline depth.
+
+\begin{figure*}[!b]
+    \centering
+    \begin{subfigure}[b]{0.32\textwidth}
+        \includegraphics[width=\textwidth]{fig11a.pdf}
+        \caption{GPT-Neo (Dolly-15k)}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \includegraphics[width=\textwidth]{fig11b.pdf}
+        \caption{GPT-Neo (E2E NLG)}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \includegraphics[width=\textwidth]{fig11c.pdf}
+        \caption{GPT-Neo (WikiText-2)}
+    \end{subfigure}
+
+    \vspace{0.2cm}
+
+    \begin{subfigure}[b]{0.32\textwidth}
+        \includegraphics[width=\textwidth]{fig11d.pdf}
+        \caption{Phi 1.5 (Dolly-15k)}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \includegraphics[width=\textwidth]{fig11e.pdf}
+        \caption{Phi 1.5 (E2E NLG)}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \includegraphics[width=\textwidth]{fig11f.pdf}
+        \caption{Phi 1.5 (WikiText-2)}
+    \end{subfigure}
+
+    \vspace{0.2cm}
+
+    \begin{subfigure}[b]{0.32\textwidth}
+        \includegraphics[width=\textwidth]{fig11g.pdf}
+        \caption{Qwen 2.5 (Dolly-15k)}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \includegraphics[width=\textwidth]{fig11h.pdf}
+        \caption{Qwen 2.5 (E2E NLG)}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \includegraphics[width=\textwidth]{fig11i.pdf}
+        \caption{Qwen 2.5 (WikiText-2)}
+    \end{subfigure}
+
+    \caption{Exhaustive convergence analysis demonstrating stable cross-entropy loss trajectories across all permutations of model architectures, datasets, and pipeline depths (cluster sizes). The consistency across 2-, 3-, and 4-node deployments confirms the structural integrity of the compressed gradient routing.}
+    \label{fig:grid_convergence}
+\end{figure*}
+
+\clearpage
+\begin{IEEEbiography}{S. Rajarajeswari}
+Dr. S. Rajarajeswari is an Associate Professor in the Department of Computer Science and Engineering at Ramaiah Institute of Technology. Her research interests include Cloud Computing, Big Data and Data Science, Artificial Intelligence, Machine Learning, Data Mining, and Image Processing.
+\end{IEEEbiography}
+
+\begin{IEEEbiography}{R China Appala Naidu}
+Dr. R. China Appala Naidu is the Head of the Department of Computer Science and Engineering at Ramaiah Institute of Technology. His research interests include Information Security, Cloud Computing, IoT, Computer Vision, Artificial Intelligence, and Machine Learning.
+\end{IEEEbiography}
+
+\begin{IEEEbiography}{Chandrashekhar Byadgi}
+Chandrashekhar Byadgi is working at Samsung R\&D Institute Bangalore and is also a mentor for the PRISM student team.
+\end{IEEEbiography}
+
+\begin{IEEEbiography}{C S Darshan}
+C. S. Darshan is a final-year M.Tech. student in Computer Science and Engineering at Ramaiah Institute of Technology. His research interests include Large Language Models and Agentic Artificial Intelligence.
+\end{IEEEbiography}
+
+\begin{IEEEbiography}{Abhay Bhandarkar}
+Abhay Bhandarkar is a final-year undergraduate at Ramaiah Institute of Technology with interests in Machine Learning, Deep Learning, Computational Science, Aerospace, and Robotics. His work focuses on research-driven AI solutions for image recognition, analytics, and natural language processing.
+\end{IEEEbiography}
+
+\begin{IEEEbiography}{Nikhil Y N}
+Nikhil Y N is an undergraduate student at Ramaiah Institute of Technology with interests in Systems, Databases, Audio Processing, Embeddings, Compression, and Metaheuristics. He focuses on building scalable computational solutions and automation-driven systems.
+\end{IEEEbiography}
+
+\begin{IEEEbiography}{M S Swaroop}
+M. S. Swaroop is a final-year M.Tech. student in Computer Science and Engineering at Ramaiah Institute of Technology. His interests include scalable backend architectures, distributed machine learning systems, and high-performance AI infrastructure.
+\end{IEEEbiography}
+
+\section*{AI Usage Declaration}
+Artificial intelligence tools were used only to assist with the structural formatting and presentation of this manuscript. The research content, technical methodology, experimental design, analysis, and conclusions were developed and verified by the authors.
+
+\EOD
+\end{document}

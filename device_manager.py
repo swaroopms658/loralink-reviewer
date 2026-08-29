@@ -54,9 +54,15 @@ def _usable_mem_gb(dev, utilization_limit, is_master, embedding_size_gb):
 
 def _assert_feasible(assignments, devices, layer_size_gb, embedding_size_gb,
                      master_ip, utilization_limit):
+    # F3: reserve LM-head memory (== embedding_size_gb) on the last active worker
+    # in cluster order, mirroring smart's section-6 handling for the non-smart path.
+    active = [d for d in devices if assignments.get(d.ip, 0) > 0]
+    last_active_ip = active[-1].ip if active else None
     for d in devices:
         need = assignments.get(d.ip, 0) * layer_size_gb
         have = _usable_mem_gb(d, utilization_limit, d.ip == master_ip, embedding_size_gb)
+        if d.ip == last_active_ip:
+            have -= embedding_size_gb
         if need > have + 1e-9:
             raise PartitionInfeasible(
                 f"{d.ip}: needs {need:.3f} GB for {assignments[d.ip]} layers, "
@@ -195,10 +201,17 @@ def compute_assignments(strategy, devices, num_layers, layer_size_gb,
     assert workers, "need at least one worker"
 
     if strategy == "smart":
-        return _smart_assignments(ordered, num_layers, layer_size_gb,
-                                  embedding_size_gb, master_ip, utilization_limit)
+        a = _smart_assignments(ordered, num_layers, layer_size_gb,
+                               embedding_size_gb, master_ip, utilization_limit)
+        # F6: smart's section-6 LM-head shed can drop layers with nowhere to
+        # re-place them. Don't silently return a partial model.
+        if sum(a.values()) != num_layers:
+            raise PartitionInfeasible(
+                f"smart partition dropped layers: {sum(a.values())} of {num_layers}")
+        return a
 
     a = {d.ip: 0 for d in ordered}
+    assert master_ip in a, f"master_ip {master_ip!r} not among healthy devices"
     coord_layer = 1 if num_layers > len(workers) else 0
     a[master_ip] = coord_layer
     rem = num_layers - coord_layer
@@ -210,6 +223,10 @@ def compute_assignments(strategy, devices, num_layers, layer_size_gb,
             rem -= 1
             i += 1
     elif strategy == "proportional":
+        # F4: not enough layers to give every worker >= 1.
+        if rem < len(workers):
+            raise PartitionInfeasible(
+                f"{num_layers} layers cannot give every one of {len(workers)} workers >=1")
         weights = [max(d.stats.flops, 1e-6) for d in workers]
         total = sum(weights)
         raw = [rem * w / total for w in weights]
@@ -220,12 +237,23 @@ def compute_assignments(strategy, devices, num_layers, layer_size_gb,
         for d, _ in sorted(zip(workers, raw), key=lambda p: p[1] - int(p[1]),
                            reverse=True)[:leftover]:
             a[d.ip] += 1
+        # F5: repair to >= 1 without re-robbing a worker we just topped up.
+        repaired = set()
         for d in workers:
             if a[d.ip] == 0:
-                donor = max(workers, key=lambda x: a[x.ip])
+                donors = [x for x in workers if a[x.ip] > 1 and x.ip not in repaired]
+                if not donors:
+                    raise PartitionInfeasible(
+                        f"proportional cannot give every one of {len(workers)} workers >=1")
+                donor = max(donors, key=lambda x: a[x.ip])
                 a[donor.ip] -= 1
                 a[d.ip] += 1
+                repaired.add(d.ip)
     elif strategy == "random":
+        # F4: not enough layers to give every worker >= 1.
+        if rem < len(workers):
+            raise PartitionInfeasible(
+                f"{num_layers} layers cannot give every one of {len(workers)} workers >=1")
         rng = __import__("random").Random(seed)
         for d in workers:
             a[d.ip] += 1

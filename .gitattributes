@@ -1,0 +1,10 @@
+# Deterministic line endings — the Colab notebooks and checksum provenance
+# both assume LF. Without this, core.autocrlf on Windows rewrites the working
+# copy to CRLF and patch/checksums.py --verify fails on a spurious mismatch.
+*.py    text eol=lf
+*.patch text eol=lf
+*.ipynb text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.csv   text eol=lf
+SHA256SUMS text eol=lf

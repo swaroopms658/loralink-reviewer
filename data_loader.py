@@ -133,8 +133,8 @@ def get_data_loader(
             subset_dataset = tokenized_dataset.select(range(start, end))
             bounds = (start, end, "train-tail")
     else:
-        end = total - eval_holdout if eval_holdout else min(num_samples, total)
-        end = max(1, min(end, total, num_samples if not eval_holdout else end))
+        # F8: honour num_samples even when eval_holdout is set.
+        end = min(num_samples, total - eval_holdout) if eval_holdout else min(num_samples, total)
         subset_dataset = tokenized_dataset.select(range(0, end))
         bounds = (0, end, "train")
     print(f"📐 slice bounds: {bounds}")

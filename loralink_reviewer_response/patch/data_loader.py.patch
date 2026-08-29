@@ -1,0 +1,54 @@
+diff --git a/data_loader.py b/data_loader.py
+index 1650c0b..af0c18f 100644
+--- a/data_loader.py
++++ b/data_loader.py
+@@ -67,6 +67,9 @@ def get_data_loader(
+     tokenizer: AutoTokenizer,
+     num_samples: int = 5,
+     dataset_name: str = "wikitext",
++    *,
++    split: str = "train",
++    eval_holdout: int = 0,
+ ) -> torch.utils.data.DataLoader:
+     assert isinstance(tokenizer, PreTrainedTokenizerBase)
+     assert isinstance(num_samples, int) and num_samples > 0
+@@ -106,9 +109,38 @@ def get_data_loader(
+     tokenized_dataset = dataset.map(tokenize_function, batched=True, remove_columns=remove_cols)
+     tokenized_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
+ 
+-    subset_dataset = tokenized_dataset.select(range(min(num_samples, len(tokenized_dataset))))
++    total = len(tokenized_dataset)
++    if split == "eval":
++        val = None
++        for cand in ("validation", "test"):
++            try:
++                v = load_dataset(**{**load_args, "split": cand})
++                v = v.map(ds_info["formatter"], batched=True)
++                v = v.filter(lambda x: len(x["text"].strip()) > 0)
++                v = v.map(tokenize_function, batched=True, remove_columns=remove_cols)
++                v.set_format(type="torch", columns=["input_ids", "attention_mask"])
++                val = v
++                break
++            except Exception:
++                continue
++        if val is not None:
++            end = min(num_samples, len(val))
++            subset_dataset = val.select(range(end))
++            bounds = (0, end, cand)
++        else:
++            start = max(0, total - max(num_samples, eval_holdout))
++            end = min(total, start + num_samples)
++            subset_dataset = tokenized_dataset.select(range(start, end))
++            bounds = (start, end, "train-tail")
++    else:
++        # F8: honour num_samples even when eval_holdout is set.
++        end = min(num_samples, total - eval_holdout) if eval_holdout else min(num_samples, total)
++        subset_dataset = tokenized_dataset.select(range(0, end))
++        bounds = (0, end, "train")
++    print(f"📐 slice bounds: {bounds}")
+ 
+     dataloader = torch.utils.data.DataLoader(subset_dataset, batch_size=1, shuffle=False)
++    dataloader.slice_bounds = bounds
+     print(f"✅ DataLoader ready: {len(subset_dataset)} samples")
+ 
+     return dataloader

@@ -870,8 +870,29 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, default="wikitext",
                       choices=["wikitext", "dolly", "e2e"],
                       help="Dataset to use for training (default: wikitext)")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--num-samples", type=int, default=60)
+    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--eval-holdout", type=int, default=0)
+    parser.add_argument("--partition-strategy",
+                        choices=["smart", "round_robin", "proportional", "random"],
+                        default="smart")
+    parser.add_argument("--base-model", type=str, default=None,
+                        help="alias for --model-path; wins if both set")
+    parser.add_argument("--run-tag", type=str, default="")
+    parser.add_argument("--metrics-csv", type=str, default="")
 
     args = parser.parse_args()
+
+    if args.base_model:
+        args.model_path = args.base_model
+
+    import random as _random, numpy as _np
+    _random.seed(args.seed); _np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+    print(f"🎲 seed={args.seed}")
 
     if args.role == "coordinator":
         assert args.workers is not None, "❌ --workers required for coordinator role"

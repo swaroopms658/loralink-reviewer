@@ -85,20 +85,21 @@ preprint arXiv:2505.02795, 2025.
   > QLoRA ... reduces memory usage enough to finetune a 65B parameter model on a single 48GB GPU while preserving full 16-bit finetuning task performance.
 
 - `inference_memory_footprint = 6 GB` (Guanaco 7B) and the 13B/33B/65B companions
-  - Table 6:
+  - Table 6 (Memory column, reconstructed from cells):
 
   > Guanaco 7B ... 6 GB; Guanaco 13B ... 10 GB; Guanaco 33B ... 21 GB; Guanaco 65B ... 41 GB
 
 - `accuracy_4bit_NF4_double_quant = 53.1 percent` (MMLU 5-shot, mean over LLaMA
-  7B-65B) - Table 4:
+  7B-65B) - Table 4 (mean 5-shot MMLU accuracy: NF4+DQ 53.1 vs BFloat16 53.0):
 
-  > NF4 + DQ mean 5-shot MMLU accuracy 53.1, vs BFloat16 baseline 53.0 - "4-bit NormalFloat with double quantization matches 16-bit LoRA performance."
+  > Overall, NF4 with double quantization (DQ) matches BFloat16 performance, while FP4 is consistently one percentage point behind both.
 
-**Substitution note:** The exact ">780GB -> <48GB" abstract sentence is used for
-the memory row (the brief pointed at a Section 4 table; the abstract states the
-same single-GPU 48GB result more cleanly and is the widely cited number). Vicuna
-score (99.3% of ChatGPT, abstract) was available but the MMLU Table 4 comparison
-was chosen as the quality metric because it directly contrasts 4-bit vs 16-bit.
+**Substitution note:** The brief pointed at a Section 4 memory table; the plain
+abstract sentence ("finetune a 65B parameter model on a single 48GB GPU") is
+quoted instead because it states the same single-GPU 48GB result and is directly
+checkable in the abstract. Vicuna score (99.3% of ChatGPT, abstract) was
+available but the Table 4 comparison was chosen as the quality metric because it
+directly contrasts 4-bit NF4 against BFloat16.
 
 ---
 
@@ -138,7 +139,7 @@ preprint arXiv:1910.02054, 2019/2020. (SC20.)
 - `aggregate_sustained_throughput = 15 PFLOPS` and
   `max_trainable_params_without_model_parallelism = 13 B` - Abstract:
 
-  > ZeRO can train large models of up to 13B parameters (e.g., larger than Megatron GPT 8.3B and T5 11B) [without requiring model parallelism] ... achieving throughput of 15 Petaflops. This represents an 8x increase in model size and 10x increase in achievable performance ... it trains large models of over 100B parameter with super-linear speedup on 400 GPUs.
+  > We implement and evaluate ZeRO: it trains large models of over 100B parameter with super-linear speedup on 400 GPUs, achieving throughput of 15 Petaflops. This represents an 8x increase in model size and 10x increase in achievable performance over state-of-the-art. In terms of usability, ZeRO can train large models of up to 13B parameters (e.g., larger than Megatron GPT 8.3B and T5 11B) without requiring model parallelism.
 
 ---
 
@@ -182,6 +183,6 @@ preprint arXiv:2104.04473, 2021. (SC21.)
   > Our approach allows us to perform training iterations on a model with 1 trillion parameters at 502 petaFLOP/s on 3072 GPUs with achieved per-GPU throughput of 52% of theoretical peak.
 
 - `per_GPU_throughput = 163 TFLOPS` (trillion-parameter model, 3072 A100) -
-  Section 5.1 / Table 1 (weak-scaling, 1B to 1T parameters):
+  Introduction, Section 1:
 
-  > 163 teraFLOP/s per GPU (52% of theoretical peak) for the trillion-parameter model on 3072 GPUs.
+  > ...an achieved end-to-end training throughput of 163 teraFLOP/s per GPU (including communication, data processing, and optimization), and an aggregate throughput of 502 petaFLOP/s, on a GPT model with a trillion parameters using mixed precision.

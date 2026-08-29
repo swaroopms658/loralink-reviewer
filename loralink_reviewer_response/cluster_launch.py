@@ -42,6 +42,25 @@ def _clear_netem():
                    check=False, capture_output=True)
 
 
+_MAIN = str(REPO_ROOT / "main.py")  # absolute: children run with cwd=workdir
+
+
+def _worker_cmd(ip, model, seed):
+    return [sys.executable, _MAIN, "--role", "worker",
+            "--host-ip", ip, "--base-model", model, "--seed", str(seed)]
+
+
+def _coord_cmd(coord_ip, worker_ips, *, model, dataset, seed, num_samples,
+               epochs, eval_holdout, strategy, tag, csv_path):
+    return [sys.executable, _MAIN, "--role", "coordinator",
+            "--host-ip", coord_ip, "--workers", ",".join(worker_ips),
+            "--base-model", model, "--dataset", dataset, "--seed", str(seed),
+            "--num-samples", str(num_samples), "--epochs", str(epochs),
+            "--eval-holdout", str(eval_holdout),
+            "--partition-strategy", strategy, "--run-tag", tag,
+            "--metrics-csv", str(csv_path)]
+
+
 def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
                 strategy="smart", compression=True, num_samples=60, epochs=1,
                 eval_holdout=0, netem=None, tag="", run_timeout_s=900,
@@ -62,8 +81,8 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
     try:
         if netem:
             if _tc_available():
+                netem_mode = "tc-netem"  # set first so finally clears a partial install
                 _apply_netem(netem)
-                netem_mode = "tc-netem"
             else:
                 netem_mode = "in-process-shim"
                 env["LORALINK_NET_SHIM"] = f'{netem.get("delay_ms", 0)},{netem.get("loss_pct", 0)}'
@@ -71,20 +90,15 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
 
         for ip in worker_ips:
             procs.append(subprocess.Popen(
-                [sys.executable, "main.py", "--role", "worker",
-                 "--host-ip", ip, "--base-model", model, "--seed", str(seed)],
-                cwd=workdir, env=env))
+                _worker_cmd(ip, model, seed), cwd=workdir, env=env))
         for ip in worker_ips:
             _wait_port(ip, PORT)
 
         coord = subprocess.Popen(
-            [sys.executable, "main.py", "--role", "coordinator",
-             "--host-ip", coord_ip, "--workers", ",".join(worker_ips),
-             "--base-model", model, "--dataset", dataset, "--seed", str(seed),
-             "--num-samples", str(num_samples), "--epochs", str(epochs),
-             "--eval-holdout", str(eval_holdout),
-             "--partition-strategy", strategy, "--run-tag", tag,
-             "--metrics-csv", str(csv_path)],
+            _coord_cmd(coord_ip, worker_ips, model=model, dataset=dataset,
+                       seed=seed, num_samples=num_samples, epochs=epochs,
+                       eval_holdout=eval_holdout, strategy=strategy, tag=tag,
+                       csv_path=csv_path),
             cwd=workdir, env=env)
         procs.append(coord)
         try:
@@ -107,5 +121,8 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
         for p in procs:
             with contextlib.suppress(Exception):
                 p.kill()
+        for p in procs:  # reap so no zombies and ports 29500 are released before return
+            with contextlib.suppress(Exception):
+                p.wait(timeout=5)
         if netem_mode == "tc-netem":
             _clear_netem()

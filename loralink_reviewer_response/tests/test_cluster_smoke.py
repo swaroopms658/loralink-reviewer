@@ -40,6 +40,21 @@ def test_ip_plan_and_signature():
         assert params[name].default == default, name
 
 
+def test_child_cmds_use_absolute_main():
+    import os.path
+
+    wcmd = cluster_launch._worker_cmd("127.0.0.2", "m", 0)
+    ccmd = cluster_launch._coord_cmd(
+        "127.0.0.1", ["127.0.0.2"], model="m", dataset="wikitext", seed=0,
+        num_samples=6, epochs=1, eval_holdout=0, strategy="smart", tag="t",
+        csv_path="/tmp/r.csv")
+    for cmd in (wcmd, ccmd):
+        main_arg = cmd[1]
+        assert os.path.isabs(main_arg), main_arg
+        assert main_arg.endswith("main.py")
+        assert os.path.isfile(main_arg)
+
+
 @pytest.mark.colab
 def test_two_worker_run_writes_rows(tmp_path):
     import pandas as pd

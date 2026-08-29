@@ -47,7 +47,8 @@ def _read_many(results_dir, prefix, suffix=".csv"):
     for f in files:
         try:
             frames.append(pd.read_csv(f))
-        except (pd.errors.EmptyDataError, OSError):
+        except (pd.errors.EmptyDataError, pd.errors.ParserError, OSError) as e:
+            print(f"WARN: unreadable {f}: {e}")
             continue
     if not frames:
         return None

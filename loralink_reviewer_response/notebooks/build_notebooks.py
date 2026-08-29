@@ -65,7 +65,10 @@ print(f"done {{DONE}}/{{PLANNED}}")
 from loralink_reviewer_response.eval_quality import evaluate_adapter
 
 PER_RUN_ESTIMATE = 420
-ds, seed = SHARD.split(":"); seed = int(seed)
+parts = SHARD.split(":")
+ds = parts[0]
+seed = int(parts[1]) if len(parts) > 1 else 0
+print(f"shard: dataset={{ds}} seed={{seed}}")
 ARMS = ["ON", "OFF", "reference"]
 PLANNED, DONE = len(ARMS), 0
 sys_csv = f"results_qsys_{{ACCOUNT_TAG}}.csv"
@@ -114,20 +117,26 @@ PLANNED, DONE = len(STRATS) * len(SEEDS), 0
 csv = f"results_sched_{{ACCOUNT_TAG}}.csv"
 summary_csv = f"results_sched_{{ACCOUNT_TAG}}.summary.csv"
 
+stop = False
 for strat in STRATS:
+    if stop:
+        break
     for seed in SEEDS:
         if budget_left() < PER_RUN_ESTIMATE:
-            print("budget exhausted, stopping"); break
+            print("budget exhausted, stopping"); stop = True; break
         try:
             run_cluster(4, "wikitext", seed, model=MODEL, strategy=strat,
                         num_samples=30, tag=f"sched-{{strat}}-s{{seed}}",
                         results_csv=csv)
         except RuntimeError as e:  # device_manager.PartitionInfeasible subclasses this
             print(f"  {{strat}} s{{seed}}: infeasible ({{e}})")
+            # SUMMARY_COLUMNS only -- append_rows' extrasaction="ignore" drops the
+            # extra "note" key so the file keeps main.py's 18-col schema (a wider
+            # header makes pandas.read_csv raise ParserError in aggregate._t4).
             append_rows(summary_csv, [{{"run_tag": f"sched-{{strat}}-s{{seed}}",
                                        "seed": seed, "strategy": strat,
                                        "n_batches": 0, "note": "infeasible"}}],
-                        SUMMARY_COLUMNS + ["note"])
+                        SUMMARY_COLUMNS)
         DONE += 1
 print(f"done {{DONE}}/{{PLANNED}}")
 '''),
@@ -139,15 +148,20 @@ os.environ["LORALINK_FAKE_BENCHMARK"] = "1"
 {_IMPORT}
 
 PER_RUN_ESTIMATE = 180
-NS = [2, 3, 4, 5, 6, 8]
-REPS = list(range(3))
+# SHARD may hold a worker-count subset like "6,8" (split across accounts);
+# empty = the full [2, 4, 6, 8] sweep. 4 counts x 2 reps ~= 24 min, reaches n=8.
+NS = [int(x) for x in SHARD.split(",")] if SHARD.strip() else [2, 4, 6, 8]
+REPS = list(range(2))
 PLANNED, DONE = len(NS) * len(REPS), 0
 csv = f"results_scale_{{ACCOUNT_TAG}}.csv"
 
+stop = False
 for n in NS:
+    if stop:
+        break
     for rep in REPS:
         if budget_left() < PER_RUN_ESTIMATE:
-            print("budget exhausted, stopping"); break
+            print("budget exhausted, stopping"); stop = True; break
         run_cluster(n, "wikitext", 0, model=MODEL, num_samples=30,
                     tag=f"scale-n{{n}}-r{{rep}}", results_csv=csv)
         DONE += 1
@@ -165,10 +179,13 @@ LOSSES = [0, 1, 3]
 PLANNED, DONE = len(DELAYS) * len(LOSSES), 0
 csv = f"results_net_{{ACCOUNT_TAG}}.csv"
 
+stop = False
 for delay in DELAYS:
+    if stop:
+        break
     for loss in LOSSES:
         if budget_left() < PER_RUN_ESTIMATE:
-            print("budget exhausted, stopping"); break
+            print("budget exhausted, stopping"); stop = True; break
         run_cluster(2, "wikitext", 0, model=MODEL, num_samples=20,
                     netem={{"delay_ms": delay, "loss_pct": loss}},
                     tag=f"net-d{{delay}}-l{{loss}}", results_csv=csv)

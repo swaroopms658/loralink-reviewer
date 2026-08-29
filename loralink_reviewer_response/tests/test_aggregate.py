@@ -174,6 +174,18 @@ def test_render_response_warns_on_unfilled(tmp_path, capsys):
     assert "unfilled placeholder" in capsys.readouterr().out
 
 
+def test_read_many_skips_ragged_csv(tmp_path):
+    # a wider-header / ragged file (e.g. an infeasible row appended with an extra
+    # column) must be skipped, not crash the whole report.
+    (tmp_path / "results_sched_good.summary.csv").write_text(
+        pd.DataFrame([_summary_row(strategy="smart")]).to_csv(index=False))
+    (tmp_path / "results_sched_bad.summary.csv").write_text(
+        "a,b,c\n1,2,3\n4,5,6,7,8\n")
+    df = _read_many(str(tmp_path), "results_sched_", ".summary.csv")
+    assert df is not None and len(df) == 1
+    assert df.iloc[0]["strategy"] == "smart"
+
+
 def test_read_many_suffix_excludes_summary(tmp_path):
     rd = tmp_path
     _write(rd / "results_converge_x.csv", [

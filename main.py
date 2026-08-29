@@ -952,6 +952,25 @@ if __name__ == "__main__":
         torch.cuda.manual_seed_all(args.seed)
     print(f"🎲 seed={args.seed}")
 
+    # In-process network shim: when LORALINK_NET_SHIM="delay_ms,loss_pct" is set,
+    # monkeypatch NetworkManager.send_message to add latency / drop sends (triggers
+    # the retry path). network_protocol.py itself stays untouched.
+    _shim_spec = os.environ.get("LORALINK_NET_SHIM")
+    if _shim_spec:
+        import network_protocol as _np_mod, random as _shim_rand, time as _shim_time
+        _d_ms, _loss = _shim_spec.split(",")
+        _shim_delay = float(_d_ms) / 1000.0
+        _shim_loss = float(_loss) / 100.0
+        _shim_orig = _np_mod.NetworkManager.send_message
+        def _shim_send(peer_ip, peer_port, message):
+            if _shim_delay:
+                _shim_time.sleep(_shim_delay)
+            if _shim_loss and _shim_rand.random() < _shim_loss:
+                raise ConnectionError("net-shim simulated drop")
+            return _shim_orig(peer_ip, peer_port, message)
+        _np_mod.NetworkManager.send_message = staticmethod(_shim_send)
+        print(f"🌐 net-shim active: delay={_d_ms}ms loss={_loss}%")
+
     if args.role == "coordinator":
         assert args.workers is not None, "❌ --workers required for coordinator role"
         run_coordinator(args)

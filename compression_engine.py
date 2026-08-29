@@ -16,11 +16,20 @@ class OptimizedCompressionEngine:
         self.decompressor = zstd.ZstdDecompressor()
         
         self.compression_params = {
-            'activations': {'sparsity_ratio': 0.3, 'quantize': False},  
-            'gradients': {'sparsity_ratio': 0.7, 'quantize': True},    
-            'labels': {'sparsity_ratio': 0.0, 'quantize': False}       
+            'activations': {'sparsity_ratio': 0.3, 'quantize': False},
+            'gradients': {'sparsity_ratio': 0.7, 'quantize': True},
+            'labels': {'sparsity_ratio': 0.0, 'quantize': False}
         }
-        
+
+        import os
+        if os.environ.get("LORALINK_LOSSY_COMPRESSION", "1") == "0":
+            for k in self.compression_params:
+                self.compression_params[k] = {"sparsity_ratio": 0.0, "quantize": False}
+            logger.info("OptimizedCompressionEngine: lossy compression DISABLED "
+                        "(lossless zstd only)")
+        else:
+            logger.info("OptimizedCompressionEngine: lossy compression ENABLED")
+
         self.stats = {
             'total_compressions': 0,
             'total_decompressions': 0,

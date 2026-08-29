@@ -69,13 +69,9 @@ def _smart_assignments(sorted_devices, num_layers, layer_size_gb, embedding_size
     coordinator = sorted_devices[0]
     assert coordinator.ip == master_ip, "Coordinator must be first device"
 
-    # Estimate embedding size
-    vocab_size = 50257
-    hidden_size = 768  # Default, overridden by actual config in partition_model
-    embedding_size_gb_computed = (vocab_size * hidden_size * 4) / (1024 ** 3)
-
-    # Minimum memory: 1 layer + embedding
-    min_coordinator_memory_gb = layer_size_gb + embedding_size_gb_computed
+    # Minimum memory: 1 layer + embedding (embedding_size_gb is the config-derived
+    # vocab_size * hidden_size * 4 / 1024**3 passed down from partition_model)
+    min_coordinator_memory_gb = layer_size_gb + embedding_size_gb
 
     if coordinator.stats.device_type == 'cuda':
         coordinator_usable = coordinator.stats.memory_gb * utilization_limit
@@ -150,7 +146,9 @@ def _smart_assignments(sorted_devices, num_layers, layer_size_gb, embedding_size
     active_for_lm_check = [d for d in sorted_devices if assignments[d.ip] > 0]
     if len(active_for_lm_check) > 1:
         last_device = active_for_lm_check[-1]
-        lm_head_size_gb = (vocab_size * hidden_size * 4) / (1024 ** 3)
+        # LM head uses the same vocab_size * hidden_size * 4 / 1024**3 formula as
+        # the embedding, so it is exactly embedding_size_gb.
+        lm_head_size_gb = embedding_size_gb
 
         if last_device.stats.device_type == 'cuda':
             last_usable = last_device.stats.memory_gb * utilization_limit

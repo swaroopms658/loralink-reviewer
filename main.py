@@ -442,11 +442,11 @@ def run_coordinator(args):
     logging.basicConfig(level=logging.INFO, stream=sys.stdout, force=True)
 
 
-    NETWORK_MANAGER = NetworkManager("0.0.0.0", 29500, _coordinator_message_handler)
+    NETWORK_MANAGER = NetworkManager(args.host_ip or "0.0.0.0", 29500, _coordinator_message_handler)
     NETWORK_MANAGER.start_server()
 
     # Use model_name from args
-    model_config = {"model_name": args.model_path}
+    model_config = {"model_name": args.model_path, "seed": args.seed}
     DEVICE_MANAGER = DeviceManager(all_device_ips, model_config)
 
     remote_worker_ips = worker_ips
@@ -477,7 +477,7 @@ def run_coordinator(args):
         sys.exit(1)
 
     print("✅ Computing model partition...")
-    configs = DEVICE_MANAGER.partition_model(args.host_ip)
+    configs = DEVICE_MANAGER.partition_model(args.host_ip, strategy=args.partition_strategy)
 
     print("✅ Sending configurations to workers...")
     
@@ -565,26 +565,79 @@ def run_coordinator(args):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    train_loader = data_loader.get_data_loader(tokenizer, num_samples=100, dataset_name=args.dataset)
+    train_loader = data_loader.get_data_loader(
+        tokenizer, num_samples=args.num_samples, dataset_name=args.dataset,
+        split="train", eval_holdout=args.eval_holdout)
+
+    from loralink_reviewer_response.metrics_logger import (
+        append_rows, RUN_COLUMNS, SUMMARY_COLUMNS)
+    import time as _time
+    _run_start = _time.perf_counter()
+    _losses, _latencies = [], []
+    _sim = "loopback" if (args.host_ip or "").startswith("127.") else "real"
+    global_batch = 0
 
     print("✅ Starting training with real data...")
-    for batch_idx, batch in enumerate(train_loader):
-        print(f"✅ Processing batch {batch_idx}")
-        PIPELINE_ENGINE.forward_step_local(batch_idx, batch)
-
-        print(f"[Main Thread] Waiting for gradient for batch {batch_idx}...")
-        try:
-            retrieved_batch_id, gradient, loss_value = GRADIENT_QUEUE.get(timeout=300)
-            assert retrieved_batch_id == batch_idx, "❌ Mismatched batch ID!"
-            print(f"✅ [Main Thread] Got gradient, running backward pass...")
-            
+    for epoch in range(args.epochs):
+        for batch in train_loader:
+            print(f"✅ Processing batch {epoch}:{global_batch}")
+            t0 = _time.perf_counter()
+            PIPELINE_ENGINE.forward_step_local(global_batch, batch)
+            try:
+                rid, gradient, loss_value = GRADIENT_QUEUE.get(timeout=300)
+            except queue.Empty:
+                print(f"❌ Timeout waiting for gradient for batch {global_batch}")
+                sys.exit(1)
+            assert rid == global_batch, "❌ Mismatched batch ID!"
+            PIPELINE_ENGINE.backward_step(rid, gradient)
+            step_latency = _time.perf_counter() - t0
             if loss_value is not None:
-                print(f"✅ Training Loss for batch {batch_idx}: {loss_value:.4f}")
-            
-            PIPELINE_ENGINE.backward_step(retrieved_batch_id, gradient)
-        except queue.Empty:
-            print(f"❌ Timeout waiting for gradient for batch {batch_idx}")
-            sys.exit(1)
+                _losses.append(float(loss_value))
+                print(f"✅ loss[{epoch}:{global_batch}] = {loss_value:.4f}")
+            _latencies.append(step_latency)
+
+            if args.metrics_csv:
+                cs = PIPELINE_ENGINE.compression_engine.get_compression_stats()
+                ratio = cs.get("average_compression_ratio", "").rstrip("x") or ""
+                append_rows(args.metrics_csv, [{
+                    "run_tag": args.run_tag, "seed": args.seed,
+                    "strategy": args.partition_strategy,
+                    "compression": os.environ.get("LORALINK_LOSSY_COMPRESSION", "1"),
+                    "dataset": args.dataset, "model": args.model_path,
+                    "n_workers": len(ACTIVE_WORKER_IPS), "epoch": epoch,
+                    "global_batch": global_batch,
+                    "loss": "" if loss_value is None else float(loss_value),
+                    "step_latency_s": step_latency, "comp_ratio": ratio,
+                    "bytes_sent": PIPELINE_ENGINE.compression_engine.stats["total_compressed_bytes"],
+                    "bytes_saved": (PIPELINE_ENGINE.compression_engine.stats["total_original_bytes"]
+                                    - PIPELINE_ENGINE.compression_engine.stats["total_compressed_bytes"]),
+                    "sim": _sim, "timestamp": _time.time(),
+                }], RUN_COLUMNS)
+            global_batch += 1
+
+    if args.metrics_csv:
+        st = PIPELINE_ENGINE.compression_engine.stats
+        counts = [len(c.assigned_layers) for c in configs.values()]
+        import statistics as _stx
+        append_rows(args.metrics_csv, [{
+            "run_tag": args.run_tag, "seed": args.seed,
+            "strategy": args.partition_strategy,
+            "compression": os.environ.get("LORALINK_LOSSY_COMPRESSION", "1"),
+            "dataset": args.dataset, "model": args.model_path,
+            "n_workers": len(ACTIVE_WORKER_IPS), "sim": _sim,
+            "n_batches": global_batch,
+            "mean_loss": (sum(_losses)/len(_losses)) if _losses else "",
+            "last_loss": _losses[-1] if _losses else "",
+            "mean_step_latency_s": (sum(_latencies)/len(_latencies)) if _latencies else "",
+            "total_bytes_sent": st["total_compressed_bytes"],
+            "total_bytes_saved": st["total_original_bytes"] - st["total_compressed_bytes"],
+            "overall_comp_ratio": (st["total_original_bytes"] / st["total_compressed_bytes"])
+                                   if st["total_compressed_bytes"] else "",
+            "wall_time_s": _time.perf_counter() - _run_start,
+            "partition_map": ";".join(f"{ip}:{len(c.assigned_layers)}"
+                                      for ip, c in configs.items()),
+            "partition_balance_std": _stx.pstdev(counts) if len(counts) > 1 else 0.0,
+        }], SUMMARY_COLUMNS)
 
     print("✅ Training complete. Starting model reconstruction...")
     
@@ -846,7 +899,7 @@ def run_worker(args):
     global NETWORK_MANAGER
 
     print("✅ Starting worker node...")
-    NETWORK_MANAGER = NetworkManager("0.0.0.0", 29500, _worker_message_handler)
+    NETWORK_MANAGER = NetworkManager(args.host_ip or "0.0.0.0", 29500, _worker_message_handler)
     NETWORK_MANAGER.start_server()
 
     print("✅ Worker ready, waiting for commands...")
@@ -864,7 +917,8 @@ if __name__ == "__main__":
     parser.add_argument("--workers", type=str,
                       help="Comma-separated list of worker IPs (coordinator only)")
     parser.add_argument("--host-ip", type=str,
-                      help="The LAN IP address of this machine (coordinator only)")
+                      help="The LAN IP address of this machine; used as the "
+                           "NetworkManager bind address for both coordinator and worker roles")
     parser.add_argument("--model-path", type=str, default="EleutherAI/gpt-neo-2.7B",
                       help="Model name or path (relative to ./models/) - e.g., 'EleutherAI/gpt-neo-2.7B' or 'meta-llama/Llama-2-7b-hf'")
     parser.add_argument("--dataset", type=str, default="wikitext",

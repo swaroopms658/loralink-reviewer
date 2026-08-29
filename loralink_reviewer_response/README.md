@@ -11,6 +11,31 @@ sessions in parallel across Gmail accounts). Every reported number is tagged
 results — the patch is additive flags, a lossless-only compression toggle, extra
 partitioners, metric logging, and an eval script.
 
+## Run order
+
+1. **Push the patched repo to a git remote** and paste its URL into each
+   notebook's cell 1 (`<SET_REPO_URL>`). The deliverable zip is the
+   `loralink_reviewer_response/` package only — the notebooks `git clone` the
+   full patched repo to get `main.py` and the other patched sources.
+2. **`00_setup_smoke`** (one throwaway account, Free T4, Runtime → Run all,
+   ~9 min) — must print `SMOKE PASS` before you fan out.
+3. **`01`–`05` in parallel, one shard per Google account** — download every
+   `results_*.csv` + `results_*.summary.csv` each produces:
+   - acct1 → `01` `SHARD="wikitext"` · acct2 → `01` `SHARD="e2e"`
+   - acct3–5 → `02` `SHARD="e2e:0"` / `"e2e:1"` / `"e2e:2"`
+   - acct6–8 → `02` `SHARD="wikitext:0"` / `"wikitext:1"` / `"wikitext:2"`
+     (n=3 for the WikiText perplexity delta; skip only if you accept a leftover
+     placeholder there)
+   - acct9 → `02b` · acct10 → `03` `SHARD=""` · acct11 → `04` `SHARD=""`
+     (or `"6,8"` to split) · acct12 → `05` `SHARD=""` (or `"0,25"` to split)
+4. **Collect every downloaded CSV into one folder**, open
+   `99_aggregate_report.ipynb`, upload them, Run all → `figures/T1..T6.*`,
+   `figures/summary.json`, `RESPONSE_ABHAY_NIKHIL.filled.md`. Missing shards
+   degrade gracefully (`WARN: no data for T#` + a leftover `{{placeholder}}`).
+
+Quickstart lives in `HOW_TO_RUN.txt` (zip root). A record of the local
+packaging/dry-run verification is in `VERIFICATION.md`.
+
 ## Model tiers & why
 
 | Tier | Model | Notebooks | Rationale |
@@ -114,9 +139,13 @@ jupyter nbconvert --to notebook --execute \
 
 - Source integrity: `patch/SHA256SUMS` records the checksum of every patched
   source file; `patch/checksums.py --verify` is run in notebook cell 1.
-- Dependency pins: `requirements-colab.txt` (transformers 4.44.2, datasets
-  2.21.0, peft 0.12.0, evaluate 0.4.2, scipy 1.13.1, …) — installed unchanged on
-  every Colab session.
+- Dependency pins: `requirements-colab.txt` — transformers 4.44.2, datasets
+  2.21.0, accelerate 0.34.2, peft 0.12.0, evaluate 0.4.2, rouge-score 0.1.2,
+  sacrebleu 2.4.3, scipy 1.13.1, pandas 2.2.2, matplotlib 3.9.2, zstandard
+  0.23.0, psutil 6.0.0. Installed unchanged on every Colab session. `pip install
+  -r … --dry-run` resolves cleanly; no bumps were needed. A full install +
+  import against a live Colab runtime (Python 3.10/3.11) has **not** been run —
+  see `VERIFICATION.md`.
 - Branch: `reviewer-response-abhay-nikhil`.
 - Each notebook writes a `run_manifest_*.json` with the account tag, shard,
   runs-completed-vs-planned, and the `SHA256SUMS` contents.

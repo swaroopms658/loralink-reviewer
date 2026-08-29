@@ -1415,8 +1415,15 @@ git commit -m "docs: curated published-baseline table with verbatim sources"
 - Create: `loralink_reviewer_response/aggregate.py`
 - Test: `loralink_reviewer_response/tests/test_aggregate.py` **[local]** (synthetic CSVs)
 
+> **AMENDMENT (post-Task-6 review):** `main.py` writes two files per run — per-batch `RUN_COLUMNS` rows to `<metrics_csv>` (e.g. `results_stat_<tag>.csv`) and the single `SUMMARY_COLUMNS` row to a sibling `<metrics_csv stem>.summary.csv` (e.g. `results_stat_<tag>.summary.csv`). The two schemas differ, so they must not share a file. In this task:
+> - Summary-level tables (T1 stat-validation means, T4 scheduling throughput/balance, T5 scalability, T6 network) read `_read_many(results_dir, "<prefix>", suffix=".summary.csv")`.
+> - Per-batch / loss-curve data (T1 convergence curve) reads the plain `<prefix>*.csv` (excluding `*.summary.csv` — filter it out in the glob).
+> - `_read_many` gains a `suffix=".csv"` param; when `".summary.csv"` is requested, match `*{prefix}*.summary.csv`; when `".csv"` is requested, match `*{prefix}*.csv` and drop names ending `.summary.csv`.
+> - Test fixtures write `results_*_<tag>.summary.csv` for summary rows and `results_*_<tag>.csv` for per-batch rows.
+> - `results_quality_*` (from `eval_quality.py`, Task 9) is a single self-contained schema — unaffected, stays `results_quality_*.csv`.
+
 **Interfaces:**
-- Consumes: `results/*.csv` (mix of `results_stat_*`, `results_quality_*`, `results_sched_*`, `results_scale_*`, `results_net_*`, `results_converge_*`), `baselines/published_baselines.csv`, `statlib.mean_std_ci`
+- Consumes: `results/*.csv` per-batch RUN rows + `results/*.summary.csv` summary rows (`results_stat_*`, `results_sched_*`, `results_scale_*`, `results_net_*`, `results_converge_*`), plus single-schema `results_quality_*.csv` (Task 9), `baselines/published_baselines.csv`, `statlib.mean_std_ci`
 - Produces:
   - `build_all(results_dir, baselines_csv, out_dir) -> dict[str, pandas.DataFrame]` writing:
     - `figures/T1_stat_validation.csv` + `figures/T1_loss_curve.png/.pdf`
@@ -1653,8 +1660,13 @@ from google.colab import files
 json.dump({"tag": ACCOUNT_TAG, "shard": SHARD, "done": DONE, "planned": PLANNED,
            "checksums": open("loralink_reviewer_response/patch/SHA256SUMS").read()},
           open(f"run_manifest_{ACCOUNT_TAG}.json","w"), indent=2)
-for f in glob.glob(f"results_*_{ACCOUNT_TAG}.csv") + [f"run_manifest_{ACCOUNT_TAG}.json"]:
+for f in (glob.glob(f"results_*_{ACCOUNT_TAG}.csv")
+          + glob.glob(f"results_*_{ACCOUNT_TAG}.summary.csv")
+          + [f"run_manifest_{ACCOUNT_TAG}.json"]):
     files.download(f)
+# NOTE: main.py writes per-batch rows to results_<kind>_<tag>.csv and the
+# single summary row to results_<kind>_<tag>.summary.csv (schemas differ).
+# Both must be downloaded and dropped into results/ for aggregate.py.
 ```
 
 - [ ] **Step 2: Per-notebook bodies** (cell 4 content)

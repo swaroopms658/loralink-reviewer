@@ -1197,7 +1197,7 @@ git commit -m "feat: localhost cluster launcher with netem + timeout"
 **Interfaces:**
 - Consumes: a saved adapter dir (`./lora_adapters` from a run), `peft`, `evaluate`, patched `data_loader.get_data_loader(..., split="eval", eval_holdout=K)`
 - Produces:
-  - `evaluate_adapter(base_model: str, adapter_dir: str, dataset: str, *, eval_holdout=200, max_new_tokens=48, limit=100, arm="", seed=0, out_csv="results_quality.csv") -> dict` with keys `perplexity`, `bleu`, `rougeL`, `n_eval`, plus the passthrough tags. Appends one row (columns: `arm, seed, dataset, base_model, perplexity, bleu, rougeL, n_eval, adapter_dir, slice_bounds`).
+  - `evaluate_adapter(base_model: str, adapter_dir: str, dataset: str, *, max_new_tokens=48, limit=100, arm="", seed=0, out_csv="results_quality.csv") -> dict` with keys `perplexity`, `bleu`, `rougeL`, `n_eval`, plus the passthrough tags. Appends one row (columns: `arm, seed, dataset, base_model, perplexity, bleu, rougeL, n_eval, adapter_dir, slice_bounds`). **AMENDMENT (post-Task-9 review):** the `eval_holdout` param was removed as dead — both datasets already evaluate on a disjoint split (`wikitext`→`test`, `e2e`→`validation`). `limit` is the eval-set size. Notebook 02 passes `limit=200`.
   - Perplexity: `exp(mean token NLL)` over the eval slice (teacher-forced, `labels=input_ids`, ignore pad).
   - BLEU/ROUGE (E2E only): greedy-decode from the `meaning_representation` prompt prefix, compare to `target` references via `evaluate.load("sacrebleu")` and `evaluate.load("rouge")`. For WikiText, `bleu = rougeL = ""` (PPL only).
 
@@ -1415,8 +1415,15 @@ git commit -m "docs: curated published-baseline table with verbatim sources"
 - Create: `loralink_reviewer_response/aggregate.py`
 - Test: `loralink_reviewer_response/tests/test_aggregate.py` **[local]** (synthetic CSVs)
 
+> **AMENDMENT (post-Task-6 review):** `main.py` writes two files per run — per-batch `RUN_COLUMNS` rows to `<metrics_csv>` (e.g. `results_stat_<tag>.csv`) and the single `SUMMARY_COLUMNS` row to a sibling `<metrics_csv stem>.summary.csv` (e.g. `results_stat_<tag>.summary.csv`). The two schemas differ, so they must not share a file. In this task:
+> - Summary-level tables (T1 stat-validation means, T4 scheduling throughput/balance, T5 scalability, T6 network) read `_read_many(results_dir, "<prefix>", suffix=".summary.csv")`.
+> - Per-batch / loss-curve data (T1 convergence curve) reads the plain `<prefix>*.csv` (excluding `*.summary.csv` — filter it out in the glob).
+> - `_read_many` gains a `suffix=".csv"` param; when `".summary.csv"` is requested, match `*{prefix}*.summary.csv`; when `".csv"` is requested, match `*{prefix}*.csv` and drop names ending `.summary.csv`.
+> - Test fixtures write `results_*_<tag>.summary.csv` for summary rows and `results_*_<tag>.csv` for per-batch rows.
+> - `results_quality_*` (from `eval_quality.py`, Task 9) is a single self-contained schema — unaffected, stays `results_quality_*.csv`.
+
 **Interfaces:**
-- Consumes: `results/*.csv` (mix of `results_stat_*`, `results_quality_*`, `results_sched_*`, `results_scale_*`, `results_net_*`, `results_converge_*`), `baselines/published_baselines.csv`, `statlib.mean_std_ci`
+- Consumes: `results/*.csv` per-batch RUN rows + `results/*.summary.csv` summary rows (`results_stat_*`, `results_sched_*`, `results_scale_*`, `results_net_*`, `results_converge_*`), plus single-schema `results_quality_*.csv` (Task 9), `baselines/published_baselines.csv`, `statlib.mean_std_ci`
 - Produces:
   - `build_all(results_dir, baselines_csv, out_dir) -> dict[str, pandas.DataFrame]` writing:
     - `figures/T1_stat_validation.csv` + `figures/T1_loss_curve.png/.pdf`
@@ -1653,15 +1660,20 @@ from google.colab import files
 json.dump({"tag": ACCOUNT_TAG, "shard": SHARD, "done": DONE, "planned": PLANNED,
            "checksums": open("loralink_reviewer_response/patch/SHA256SUMS").read()},
           open(f"run_manifest_{ACCOUNT_TAG}.json","w"), indent=2)
-for f in glob.glob(f"results_*_{ACCOUNT_TAG}.csv") + [f"run_manifest_{ACCOUNT_TAG}.json"]:
+for f in (glob.glob(f"results_*_{ACCOUNT_TAG}.csv")
+          + glob.glob(f"results_*_{ACCOUNT_TAG}.summary.csv")
+          + [f"run_manifest_{ACCOUNT_TAG}.json"]):
     files.download(f)
+# NOTE: main.py writes per-batch rows to results_<kind>_<tag>.csv and the
+# single summary row to results_<kind>_<tag>.summary.csv (schemas differ).
+# Both must be downloaded and dropped into results/ for aggregate.py.
 ```
 
 - [ ] **Step 2: Per-notebook bodies** (cell 4 content)
 
 - **00_setup_smoke** — one `run_cluster(n_workers=2, dataset="wikitext", seed=0, model="EleutherAI/gpt-neo-125M", num_samples=6, epochs=1, tag="smoke", results_csv="results_smoke_"+ACCOUNT_TAG+".csv")`; assert the CSV has ≥ 3 loss rows; print PASS/FAIL.
 - **01_stat_validation** — `MODEL=gpt-neo-125M`; `SHARD ∈ {"wikitext","e2e"}`; `for seed in range(5): run_cluster(2, SHARD, seed, num_samples=60, epochs=1, compression=True, tag=f"stat-{SHARD}-s{seed}", results_csv=f"results_stat_{ACCOUNT_TAG}.csv")`. PER_RUN_ESTIMATE=200 s.
-- **02_task_quality** — `MODEL=microsoft/phi-1_5`; `SHARD` like `"e2e:0"` (dataset:seed); `for arm in ["ON","OFF","reference"]`: `run_cluster(2, ds, seed, model=MODEL, num_samples=50, epochs=1, compression=(arm!="OFF"), eval_holdout=200, tag=f"q-{ds}-s{seed}-{arm}", results_csv=f"results_qsys_{ACCOUNT_TAG}.csv", save_adapters_to=f"adapters/{ds}_s{seed}_{arm}")` — for `reference` use `n_workers=1` and `strategy="smart"` (single-stage pipeline = centralized). Then `evaluate_adapter(MODEL, f"adapters/{ds}_s{seed}_{arm}", ds, arm=arm, seed=seed, out_csv=f"results_quality_{ACCOUNT_TAG}.csv")`. PER_RUN_ESTIMATE=420 s.
+- **02_task_quality** — `MODEL=microsoft/phi-1_5`; `SHARD` like `"e2e:0"` (dataset:seed); `for arm in ["ON","OFF","reference"]`: `run_cluster(2, ds, seed, model=MODEL, num_samples=50, epochs=1, compression=(arm!="OFF"), eval_holdout=200, tag=f"q-{ds}-s{seed}-{arm}", results_csv=f"results_qsys_{ACCOUNT_TAG}.csv", save_adapters_to=f"adapters/{ds}_s{seed}_{arm}")` — `eval_holdout=200` on `run_cluster` still holds back 200 training samples in `main.py`/`data_loader`; for `reference` use `n_workers=1` and `strategy="smart"` (single-stage pipeline = centralized). Then `evaluate_adapter(MODEL, f"adapters/{ds}_s{seed}_{arm}", ds, arm=arm, seed=seed, limit=200, out_csv=f"results_quality_{ACCOUNT_TAG}.csv")` (`limit=200`, NOT `eval_holdout` — that param was removed from `evaluate_adapter`). PER_RUN_ESTIMATE=420 s.
 - **02b_convergence** — `MODEL=microsoft/phi-1_5`; `run_cluster(2, "e2e", 0, model=MODEL, num_samples=50, epochs=3, compression=True, tag="conv-e2e", results_csv=f"results_converge_{ACCOUNT_TAG}.csv")`. Single run.
 - **03_alt_scheduling** — `MODEL=gpt-neo-125M`; `for strat in ["smart","round_robin","proportional","random"]: for seed in range(3): run_cluster(4, "wikitext", seed, strategy=strat, num_samples=30, tag=f"sched-{strat}-s{seed}", results_csv=f"results_sched_{ACCOUNT_TAG}.csv")`. Catch `PartitionInfeasible` → record a row with `n_batches=0, note="infeasible"`. PER_RUN_ESTIMATE=120 s.
 - **04_scalability_sim** — `MODEL=gpt-neo-125M`, env `LORALINK_FAKE_BENCHMARK=1`; `for n in [2,3,4,5,6,8]: for rep in range(3): run_cluster(n, "wikitext", 0, num_samples=30, tag=f"scale-n{n}-r{rep}", results_csv=f"results_scale_{ACCOUNT_TAG}.csv")`. Every row's `sim` is `loopback`. PER_RUN_ESTIMATE=180 s.

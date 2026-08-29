@@ -1,0 +1,9 @@
+LoraLink reviewer response (Abhay & Nikhil) - Colab Free Tier package.
+
+1. Push this repo (patched) to a git remote; put its URL in each notebook's cell 1 (<SET_REPO_URL>).
+   This zip is the loralink_reviewer_response/ package only - the notebooks git clone the full patched repo to get main.py and the other patched sources.
+2. Open notebooks/00_setup_smoke.ipynb in Colab (Free T4), Runtime > Run all. Confirms the cluster works (~10 min).
+3. Run 01-05 across separate Google accounts (see README "Per-notebook run guide" for shard assignments). Each downloads results_*.csv + results_*.summary.csv.
+4. Put all downloaded CSVs in one folder, open notebooks/99_aggregate_report.ipynb, upload them -> tables, plots, RESPONSE_ABHAY_NIKHIL.filled.md.
+
+Full details: README.md

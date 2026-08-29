@@ -421,6 +421,10 @@ def save_lora_adapters(
     print(f"  target_modules          : {target_modules}")
     print(f"  r (rank)                : {lora_rank}")
 
+def _summary_path(p):
+    """Sibling path for the summary CSV: foo/x.csv -> foo/x.summary.csv."""
+    return (p[:-4] + ".summary.csv") if p.endswith(".csv") else (p + ".summary.csv")
+
 def run_coordinator(args):
     global NETWORK_MANAGER, DEVICE_MANAGER, PIPELINE_ENGINE
 
@@ -619,7 +623,7 @@ def run_coordinator(args):
         st = PIPELINE_ENGINE.compression_engine.stats
         counts = [len(c.assigned_layers) for c in configs.values()]
         import statistics as _stx
-        append_rows(args.metrics_csv, [{
+        append_rows(_summary_path(args.metrics_csv), [{
             "run_tag": args.run_tag, "seed": args.seed,
             "strategy": args.partition_strategy,
             "compression": os.environ.get("LORALINK_LOSSY_COMPRESSION", "1"),

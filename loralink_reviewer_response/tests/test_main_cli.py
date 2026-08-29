@@ -160,13 +160,19 @@ def test_metrics_csv_written(repo_root, monkeypatch, tmp_path):
         sys.stdout = saved_stdout
 
     assert csv_path.exists()
-    lines = csv_path.read_text(encoding="utf-8").strip().splitlines()
-    # header + 4 per-batch RUN rows + 1 SUMMARY row
-    assert len(lines) == 6
-    assert "global_batch" in lines[0]
-    assert str(ns.seed) in lines[-1]
-    assert ns.partition_strategy in lines[-1]
-    assert "round_robin" in "".join(lines[1:])
+    run_lines = csv_path.read_text(encoding="utf-8").strip().splitlines()
+    # header + 4 per-batch RUN rows
+    assert len(run_lines) == 5
+    assert "global_batch" in run_lines[0]
+
+    summary_path = csv_path.with_suffix(".summary.csv")
+    assert summary_path.exists()
+    sum_lines = summary_path.read_text(encoding="utf-8").strip().splitlines()
+    # header + 1 SUMMARY row
+    assert len(sum_lines) == 2
+    assert "mean_loss" in sum_lines[0]
+    assert str(ns.seed) in sum_lines[1]
+    assert ns.partition_strategy in sum_lines[1]
 
 
 def test_worker_binds_host_ip(repo_root, monkeypatch):

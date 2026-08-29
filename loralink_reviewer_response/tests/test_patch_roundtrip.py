@@ -5,7 +5,8 @@ SRC_FILES = ["main.py", "device_manager.py", "compression_engine.py",
 
 
 def test_checksums_verify_clean(pkg_dir):
-    subprocess.run([sys.executable, str(pkg_dir / "patch" / "checksums.py"), "--update"], check=True)
+    # --verify only: the committed SHA256SUMS must already match the tree
+    # (notebook cell 1 runs the same bare --verify -- no --update to mask a drift).
     r = subprocess.run([sys.executable, str(pkg_dir / "patch" / "checksums.py"), "--verify"])
     assert r.returncode == 0
 

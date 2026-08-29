@@ -66,7 +66,9 @@ def test_02_eval_uses_limit_not_holdout():
 
 def test_03_handles_partition_infeasible():
     _, src = _src("03_alt_scheduling")
-    assert "except RuntimeError" in src
+    assert "except (RuntimeError, OSError)" in src
+    assert "PartitionInfeasible" in src            # only a real infeasible logs the row
+    assert "not infeasible" in src                 # other crashes are skipped, not recorded
     assert 'note": "infeasible"' in src or "note='infeasible'" in src
     assert "SUMMARY_COLUMNS" in src
 

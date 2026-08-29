@@ -136,6 +136,12 @@ def test_t5_scalability(tmp_path):
     assert "scalability" in out
     assert out["scalability"]["n"] == 3
     assert "loopback" in out["scalability"]["note"]
+    t5 = pd.read_csv(fig / "T5_scalability_sim.csv", comment="#")
+    assert "steps_per_s" in t5.columns
+    assert "throughput_workers_per_s" not in t5.columns
+    # steps_per_s == 1 / mean_step_latency_s (CSV is written at %.4g precision)
+    row = t5[t5["n_workers"] == 4].iloc[0]
+    assert abs(row["steps_per_s"] * row["mean_step_latency_s"] - 1.0) < 1e-2
 
 
 def test_t6_network(tmp_path):

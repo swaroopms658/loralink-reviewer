@@ -1,6 +1,6 @@
 """Spawn a LoraLink coordinator + N workers on loopback for one experiment run."""
 from __future__ import annotations
-import os, sys, socket, time, shutil, subprocess, contextlib, pathlib
+import os, sys, socket, time, shutil, subprocess, contextlib, pathlib, tempfile
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 PORT = 29500
@@ -78,6 +78,7 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
 
     netem_mode = "none"
     procs = []
+    errf = None
     try:
         if netem:
             if _tc_available():
@@ -94,19 +95,26 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
         for ip in worker_ips:
             _wait_port(ip, PORT)
 
+        errf = tempfile.TemporaryFile(mode="w+")  # a file, not a PIPE: no fill-up deadlock
         coord = subprocess.Popen(
             _coord_cmd(coord_ip, worker_ips, model=model, dataset=dataset,
                        seed=seed, num_samples=num_samples, epochs=epochs,
                        eval_holdout=eval_holdout, strategy=strategy, tag=tag,
                        csv_path=csv_path),
-            cwd=workdir, env=env)
+            cwd=workdir, env=env, stderr=errf)
         procs.append(coord)
         try:
             coord.wait(timeout=run_timeout_s)
         except subprocess.TimeoutExpired:
             raise TimeoutError(f"run '{tag}' exceeded {run_timeout_s}s")
         if coord.returncode != 0:
-            raise RuntimeError(f"coordinator exited {coord.returncode} for run '{tag}'")
+            _errlines = []
+            with contextlib.suppress(Exception):
+                errf.seek(0)
+                _errlines = [ln.strip() for ln in errf.read().splitlines() if ln.strip()]
+            _tail = _errlines[-1] if _errlines else "(no stderr)"
+            raise RuntimeError(
+                f"coordinator exited {coord.returncode} for run '{tag}': {_tail}")
 
         if save_adapters_to:
             src = workdir / "lora_adapters"
@@ -126,3 +134,6 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
                 p.wait(timeout=5)
         if netem_mode == "tc-netem":
             _clear_netem()
+        if errf is not None:
+            with contextlib.suppress(Exception):
+                errf.close()

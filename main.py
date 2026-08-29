@@ -953,8 +953,10 @@ if __name__ == "__main__":
     print(f"🎲 seed={args.seed}")
 
     # In-process network shim: when LORALINK_NET_SHIM="delay_ms,loss_pct" is set,
-    # monkeypatch NetworkManager.send_message to add latency / drop sends (triggers
-    # the retry path). network_protocol.py itself stays untouched.
+    # monkeypatch NetworkManager.send_message to add latency / drop sends. The shim
+    # models packet loss as connection failure -- a dropped send raises
+    # ConnectionError; there is no retry path, so the coordinator treats it as a
+    # failed step. network_protocol.py itself stays untouched.
     _shim_spec = os.environ.get("LORALINK_NET_SHIM")
     if _shim_spec:
         import network_protocol as _np_mod, random as _shim_rand, time as _shim_time

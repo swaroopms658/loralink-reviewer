@@ -4,7 +4,7 @@ What was actually run on the packaging machine (Task 14), the exact commands, an
 their output. The Colab GPU work that **could not** be run here is listed at the
 bottom.
 
-- Repo: `reviewer-response-abhay-nikhil` @ `5db8421`, clean tree, no remote.
+- Repo: `reviewer-response-abhay-nikhil` @ `e66cd00`, clean tree, no remote.
 - Python 3.12.7, Windows 11. (Colab Free ships 3.10/3.11 — see caveats.)
 
 ---
@@ -16,7 +16,7 @@ python -m pytest loralink_reviewer_response -q -m "not colab"
 ```
 
 ```
-74 passed, 2 deselected in ~50s
+76 passed, 2 deselected in ~50s
 ```
 
 The 2 deselected are the `@pytest.mark.colab` tests (see bottom).
@@ -30,6 +30,16 @@ result CSVs was hand-written into a temp `results/` dir using the real schemas
 (`metrics_logger.RUN_COLUMNS` / `SUMMARY_COLUMNS`, `eval_quality._COLS`) and the
 aggregation pipeline was run against them. Numbers below are synthetic — only the
 schema, file wiring, and placeholder coverage are being verified.
+
+> **Fake-schema caveat.** These hand-written CSVs predate the final-review fixes
+> and do **not** track every real-run schema detail — e.g. the fake
+> `results_sched_*.summary.csv` carries a `note` column only for genuinely
+> infeasible strategies, and the fake `results_net_*` carries `delay`/`loss`
+> columns that real runs derive from the `run_tag` instead. The real aggregation
+> code paths (`_t4`..`_t6`, including the ragged-header guard and the
+> `run_tag`-parsed delay/loss) are exercised with faithful fixtures in
+> `loralink_reviewer_response/tests/test_aggregate.py`; treat that suite, not
+> these fakes, as the schema authority.
 
 Fake inputs written (temp `results/`):
 
@@ -144,7 +154,7 @@ python -m pytest loralink_reviewer_response -q -m "not colab"
 ```
 
 ```
-74 passed, 2 deselected
+76 passed, 2 deselected
 ```
 
 This is the meaningful standalone check: the packaged files are complete and
@@ -211,6 +221,13 @@ authoring time and are installed unchanged by notebook cell 1.
   per README) and the walltime guard are unmeasured. Real `results_*.csv` /
   `results_*.summary.csv` schemas were modelled from `metrics_logger` /
   `eval_quality`, not observed.
+- **`04_scalability_sim` (n=8) and `05_network_netem` are not merely unmeasured
+  but *likely to hit partial failure* on a real Free T4** — NB04 can OOM at n=8
+  (9 model-loading processes on one T4) and NB05's packet-loss cells can abort
+  when a dropped send raises `ConnectionError` (P(abort) ≈ 45 % at `loss_pct=1`,
+  ≈ 84 % at 3 %). The per-cell `try/except` added in the final review degrades
+  these to *partial* results (the failed cells are skipped and printed) instead
+  of losing the whole sweep.
 - **`99_aggregate_report.ipynb` executed as a notebook** (`nbconvert --execute`):
   only its cell 3–4 logic (`build_all` + `render_response`) was run directly, not
   the notebook itself.

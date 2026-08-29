@@ -138,7 +138,9 @@ jupyter nbconvert --to notebook --execute \
 ## Provenance
 
 - Source integrity: `patch/SHA256SUMS` records the checksum of every patched
-  source file; `patch/checksums.py --verify` is run in notebook cell 1.
+  source file. Notebook cell 1 runs `patch/checksums.py --verify` (bare, no
+  `--update`) — it checks the cloned tree against the committed `SHA256SUMS` and
+  aborts the run on any mismatch.
 - Dependency pins: `requirements-colab.txt` — transformers 4.44.2, datasets
   2.21.0, accelerate 0.34.2, peft 0.12.0, evaluate 0.4.2, rouge-score 0.1.2,
   sacrebleu 2.4.3, scipy 1.13.1, pandas 2.2.2, matplotlib 3.9.2, zstandard

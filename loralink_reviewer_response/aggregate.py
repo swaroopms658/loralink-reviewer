@@ -317,16 +317,17 @@ def _t5(results_dir, fig, summary):
     if df is None:
         print("WARN: no data for T5")
         return
-    caption = (f"T5 scalability: latency + throughput vs worker count [ours]. "
-               f"{LOOPBACK}. {PROV}")
+    caption = (f"T5 scalability: mean step latency + steps/s (1/latency) vs worker "
+               f"count [ours]. Latency is loopback and the curve is per-step, not "
+               f"aggregate throughput. {LOOPBACK}. {PROV}")
     df = df.assign(_nw=_num(df.get("n_workers")), _lat=_num(df.get("mean_step_latency_s")))
     df = df.dropna(subset=["_nw", "_lat"])
     rows = []
     for nw, g in df.groupby("_nw"):
         lat = g["_lat"].mean()
-        thr = (nw / lat) if lat and lat > 0 else None
+        sps = (1.0 / lat) if lat and lat > 0 else None
         rows.append({"n_workers": int(nw), "mean_step_latency_s": float(lat),
-                     "throughput_workers_per_s": None if thr is None else float(thr),
+                     "steps_per_s": None if sps is None else float(sps),
                      "tag": "[ours]"})
     rdf = pd.DataFrame(rows).sort_values("n_workers")
     if rdf.empty:
@@ -341,11 +342,11 @@ def _t5(results_dir, fig, summary):
     f, ax = plt.subplots(figsize=(6, 4))
     ax.plot(rdf["n_workers"], rdf["mean_step_latency_s"], "o-", label="mean step latency (s)")
     ax2 = ax.twinx()
-    ax2.plot(rdf["n_workers"], rdf["throughput_workers_per_s"], "s--",
-             color="tab:orange", label="throughput (workers/s)")
+    ax2.plot(rdf["n_workers"], rdf["steps_per_s"], "s--",
+             color="tab:orange", label="steps/s (1/latency)")
     ax.set_xlabel("n_workers")
     ax.set_ylabel("mean step latency (s)")
-    ax2.set_ylabel("throughput (workers/s)")
+    ax2.set_ylabel("steps/s (1/latency)")
     ax.set_title(f"Scalability ({LOOPBACK}) [ours]")
     _save_fig(f, ax, str(fig / "T5_lines"), caption)
 
@@ -361,7 +362,8 @@ def _t6(results_dir, fig, summary):
         print("WARN: no data for T6")
         return
     caption = (f"T6 network: mean step latency over (delay x loss) [ours]. "
-               f"loopback + tc/netem emulation, {LOOPBACK}. {PROV}")
+               f"loopback (tc-netem where the Colab sandbox permits NET_ADMIN, else "
+               f"an in-process delay/loss shim) - not WAN. {PROV}")
 
     def _parse(tag, col):
         m = _NET_RE.search(str(tag))
@@ -383,7 +385,8 @@ def _t6(results_dir, fig, summary):
     _write_csv(grid, fig / "T6_network.csv", caption)
     summary["network"] = {
         "cells": grid.to_dict(orient="records"),
-        "tag": "[ours]", "n": int(len(grid)), "note": f"loopback + tc/netem, {LOOPBACK}",
+        "tag": "[ours]", "n": int(len(grid)),
+        "note": "loopback (tc-netem or in-process delay/loss shim) - not WAN",
     }
 
     piv = grid.pivot_table(index="delay", columns="loss", values="mean_step_latency_s")

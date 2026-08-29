@@ -103,8 +103,9 @@ costs in quality, not just in loss.
 (1.3 B), 2-worker loopback pipeline, 50 mini-batches, seeds `{0,1,2}`. Three
 arms per (dataset, seed): LoraLink **compression ON**, LoraLink **compression
 OFF** (lossy sparsify + int8 disabled, lossless zstd retained — faithful to the
-paper's "Disabled" row), and a **single-process PEFT-LoRA reference**.
-`eval_quality.py` then scores each saved adapter: perplexity = `exp(mean token
+paper's "Disabled" row), and a **1-worker LoraLink run** (the least-partitioned
+configuration — coordinator + one worker, compression ON) as a partitioning
+control. `eval_quality.py` then scores each saved adapter: perplexity = `exp(mean token
 NLL)` on the held-out slice (WikiText-2 `test`); BLEU via `sacrebleu` and
 ROUGE-L via `rouge-score` on greedy-decoded E2E `validation` prompts.
 
@@ -195,11 +196,12 @@ orientation only.
 
 **What we did.** Notebook `04_scalability_sim.ipynb`, `gpt-neo-125M`, worker
 counts 2 / 4 / 6 / 8 as separate loopback processes, 30 batches, 2 reps each.
-Measures step latency and derived throughput vs worker count.
+Measures mean step latency and the per-step rate (steps/s = 1/latency, **not**
+aggregate throughput) vs worker count.
 
 **Result (ours).** `figures/T5_scalability_sim.csv` / `T5_lines.png` (NB99
 cell 5) reports {{scalability.n}} worker-count points up to 8; the plot is what a
-human inspects for how step latency and throughput move as workers are added.
+human inspects for how step latency and the per-step rate move as workers are added.
 Every row and the figure caption carry the label **"{{scalability.note}}"**
 `[ours]`.
 

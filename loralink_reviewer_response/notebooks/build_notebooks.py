@@ -60,7 +60,7 @@ print(f"done {{DONE}}/{{PLANNED}}")
 '''),
 
     "02_task_quality": ("microsoft/phi-1_5", "e2e:0", f'''\
-# --- Cell 4/5: body -- compression ON/OFF vs centralized reference ----------
+# --- Cell 4/5: body -- compression ON/OFF vs a 1-worker LoraLink control ----
 {_IMPORT}
 from loralink_reviewer_response.eval_quality import evaluate_adapter
 
@@ -128,7 +128,10 @@ for strat in STRATS:
             run_cluster(4, "wikitext", seed, model=MODEL, strategy=strat,
                         num_samples=30, tag=f"sched-{{strat}}-s{{seed}}",
                         results_csv=csv)
-        except RuntimeError as e:  # device_manager.PartitionInfeasible subclasses this
+        except (RuntimeError, OSError) as e:  # TimeoutError is an OSError, not a RuntimeError
+            if "PartitionInfeasible" not in str(e):
+                print(f"  {{strat}} s{{seed}}: run failed, not infeasible: {{e}}")
+                DONE += 1; continue
             print(f"  {{strat}} s{{seed}}: infeasible ({{e}})")
             # SUMMARY_COLUMNS only -- append_rows' extrasaction="ignore" drops the
             # extra "note" key so the file keeps main.py's 18-col schema (a wider
@@ -162,8 +165,11 @@ for n in NS:
     for rep in REPS:
         if budget_left() < PER_RUN_ESTIMATE:
             print("budget exhausted, stopping"); stop = True; break
-        run_cluster(n, "wikitext", 0, model=MODEL, num_samples=30,
-                    tag=f"scale-n{{n}}-r{{rep}}", results_csv=csv)
+        try:
+            run_cluster(n, "wikitext", 0, model=MODEL, num_samples=30,
+                        tag=f"scale-n{{n}}-r{{rep}}", results_csv=csv)
+        except Exception as e:  # OOM at n=8 (9 model-loading procs on one T4) -- skip cell
+            print(f"  cell skipped: {{e}}"); DONE += 1; continue
         DONE += 1
 print(f"done {{DONE}}/{{PLANNED}}")
 '''),
@@ -186,9 +192,12 @@ for delay in DELAYS:
     for loss in LOSSES:
         if budget_left() < PER_RUN_ESTIMATE:
             print("budget exhausted, stopping"); stop = True; break
-        run_cluster(2, "wikitext", 0, model=MODEL, num_samples=20,
-                    netem={{"delay_ms": delay, "loss_pct": loss}},
-                    tag=f"net-d{{delay}}-l{{loss}}", results_csv=csv)
+        try:
+            run_cluster(2, "wikitext", 0, model=MODEL, num_samples=20,
+                        netem={{"delay_ms": delay, "loss_pct": loss}},
+                        tag=f"net-d{{delay}}-l{{loss}}", results_csv=csv)
+        except Exception as e:  # net-shim drop -> ConnectionError -> coordinator fails; skip
+            print(f"  cell skipped: {{e}}"); DONE += 1; continue
         DONE += 1
 print(f"done {{DONE}}/{{PLANNED}}")
 '''),

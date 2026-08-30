@@ -72,6 +72,16 @@ intervals.
 Five seeds `{0,1,2,3,4}` per dataset. `aggregate.py` computes mean, sample std
 and the 95 % Student-t interval over the seeds.
 
+**What the seed varies, precisely.** The seed drives LoRA's initialization and
+the training data order (the loader shuffles under a generator seeded from
+`--seed`). The *sample set* is held fixed — all seeds see the same 60 examples —
+so the interval below measures sensitivity to initialization and ordering, not
+sampling variability over the corpus. Evaluation order is never shuffled, so
+held-out metrics stay comparable across runs. Batch size is 1 throughout, as in
+the paper's hyperparameter table. We state this because a mean taken over a
+fixed sample set is inherently order-insensitive, which is why the spread is
+narrow; a wider study would resample the training subset per seed.
+
 **Result (ours).**
 
 - WikiText-2 mean cross-entropy loss = **{{stat_validation.wikitext.mean_loss.mean}}**

@@ -85,13 +85,15 @@ exact eval slice bounds are logged into every results CSV.
 ## Seeds & statistics
 
 - Concern 1 (`01_stat_validation`): seeds `{0,1,2,3,4}`, **n = 5**. The seed drives
-  both LoRA initialization and the **training data order** — the loader shuffles
-  under a generator seeded from `--seed`, so each seed is a genuinely different
-  run and the interval below measures run-to-run variability. (Evaluation order
-  is never shuffled, so held-out metrics stay comparable. Batch size remains 1,
-  per the paper's hyperparameter table.) With the previous `shuffle=False` loader
-  every seed saw identical data in identical order and the cross-seed std was
-  0.0016 — a measure of determinism, not robustness.
+  LoRA initialization **and the training data order** — the loader shuffles under
+  a generator seeded from `--seed`. The sample set is held fixed (all seeds see
+  the same 60 examples), so the interval measures sensitivity to initialization
+  and ordering, not sampling variability over the corpus; a mean over a fixed
+  sample set is inherently order-insensitive, which is why the spread is narrow.
+  Evaluation order is never shuffled, so held-out metrics stay comparable, and
+  batch size remains 1 per the paper's hyperparameter table. With the previous
+  `shuffle=False` loader every seed saw identical data in identical order and the
+  cross-seed std was 0.0016 — a measure of determinism, not robustness.
 - Concern 2 (`02_task_quality`): seeds `{0,1,2}`, **n = 3**.
 - Intervals: 95 % **Student-t** (`scipy.stats.t`, `statlib.mean_std_ci`).
 - n is small and is printed with every interval. With n < 2, per-seed values are

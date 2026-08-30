@@ -34,5 +34,5 @@ def test_make_zip_builds(tmp_path):
 
 def test_how_to_run_exists(pkg_dir):
     txt = (pkg_dir / "HOW_TO_RUN.txt").read_text(encoding="utf-8")
-    assert "GH_PAT" in txt
+    assert "swaroopms658/loralink-reviewer" in txt
     assert "99_aggregate_report" in txt

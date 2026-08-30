@@ -234,7 +234,6 @@ authoring time and are installed unchanged by notebook cell 1.
   only its cell 3–4 logic (`build_all` + `render_response`) was run directly, not
   the notebook itself.
 - **Full `pip install` against a real Colab runtime** (see §5).
-- **The `GH_PAT` clone flow** — the repo is pushed
-  (`github.com/swaroopms658/loralink-reviewer`, private, master); cell 1 of every
-  notebook builds the clone URL from a Colab `GH_PAT` secret. Not yet exercised
-  against a live Colab runtime.
+- **The clone flow** — the repo is pushed
+  (`github.com/swaroopms658/loralink-reviewer`, public, master); cell 1 of every
+  notebook clones it directly. Not yet exercised against a live Colab runtime.

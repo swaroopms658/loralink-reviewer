@@ -1,12 +1,9 @@
 LoraLink reviewer response (Abhay & Nikhil) - Colab Free Tier package.
 
-Repo (private): https://github.com/swaroopms658/loralink-reviewer
+Repo (public): https://github.com/swaroopms658/loralink-reviewer
 The notebooks git clone the full patched repo to get main.py and the other patched
 sources; this zip is the loralink_reviewer_response/ package only.
 
-0. One-time: create a GitHub fine-grained PAT with "Contents: read-only" on
-   swaroopms658/loralink-reviewer. In every Colab notebook, open Secrets (key icon),
-   add  GH_PAT = <that token>  and toggle "Notebook access" ON. Cell 1 reads it.
 1. Open notebooks/00_setup_smoke.ipynb in Colab. Runtime > Change runtime type > T4 GPU.
    Runtime > Run all. Must print SMOKE PASS before you fan out (~10 min).
 2. Run 01-05 across separate Google accounts (see README "Per-notebook run guide" for

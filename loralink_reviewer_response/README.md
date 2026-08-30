@@ -13,13 +13,10 @@ partitioners, metric logging, and an eval script.
 
 ## Run order
 
-1. **Repo:** `https://github.com/swaroopms658/loralink-reviewer` (private). The
+1. **Repo:** `https://github.com/swaroopms658/loralink-reviewer` (public). The
    deliverable zip is the `loralink_reviewer_response/` package only — the
-   notebooks `git clone` the full patched repo to get `main.py` and the other
-   patched sources. Each notebook's cell 1 builds the clone URL from a Colab
-   secret: add `GH_PAT` (a GitHub fine-grained PAT, *Contents: read-only* on the
-   repo) in **Secrets** (key icon) and toggle *Notebook access* on. No URL to
-   edit.
+   notebooks `git clone` the full patched repo (cell 1, no edit needed) to get
+   `main.py` and the other patched sources.
 2. **`00_setup_smoke`** (one throwaway account, Free T4, Runtime → Run all,
    ~9 min) — must print `SMOKE PASS` before you fan out.
 3. **`01`–`05` in parallel, one shard per Google account** — download every

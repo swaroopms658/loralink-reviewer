@@ -1,8 +1,85 @@
 diff --git a/main.py b/main.py
-index 34ba3b4..9005c76 100644
+index 34ba3b4..6c5d486 100644
 --- a/main.py
 +++ b/main.py
-@@ -421,6 +421,10 @@ def save_lora_adapters(
+@@ -63,6 +63,9 @@ ALL_WEIGHTS_RECEIVED = threading.Event()
+ READY_WORKERS = set()
+ ALL_WORKERS_READY = threading.Event()
+ ACTIVE_WORKER_IPS = []  # Track which workers received configs (excluding idle devices)
++SELF_HOST_IP = None  # this process's own --host-ip; stamped into outbound messages so
++                     # the receiver identifies the true sender (loopback accept() reports
++                     # 127.0.0.1 for every 127.0.0.x client, collapsing worker identity)
+ 
+ # def stream_and_merge_tensors(shard_path, lora_weights, lora_config):
+ 
+@@ -137,14 +140,18 @@ def _coordinator_message_handler(sender_ip: str, message: Message):
+     global READY_WORKERS, ALL_WORKERS_READY, ACTIVE_WORKER_IPS
+ 
+     try:
++        # Prefer the sender's self-reported IP: on loopback, accept() sees every
++        # 127.0.0.x client as 127.0.0.1, so sender_ip alone can't tell workers apart.
++        src_ip = message.metadata.get("src_ip") or sender_ip
++
+         if message.message_type == MessageType.BENCHMARK_RESULT:
+             assert DEVICE_MANAGER is not None, "DeviceManager not initialized"
+-            print(f"Received benchmark result from {sender_ip}")
+-            DEVICE_MANAGER.process_benchmark_result(sender_ip, message.payload)
+-        
++            print(f"Received benchmark result from {src_ip}")
++            DEVICE_MANAGER.process_benchmark_result(src_ip, message.payload)
++
+         elif message.message_type == MessageType.WORKER_READY:
+-            print(f"✅ Worker {sender_ip} is READY")
+-            READY_WORKERS.add(sender_ip)
++            print(f"✅ Worker {src_ip} is READY")
++            READY_WORKERS.add(src_ip)
+             
+             # Check if all ACTIVE workers are ready (idle devices were excluded)
+             if len(ACTIVE_WORKER_IPS) > 0:
+@@ -179,12 +186,12 @@ def _coordinator_message_handler(sender_ip: str, message: Message):
+                 print(f"Error processing gradient from {sender_ip}: {e}")
+ 
+         elif message.message_type == MessageType.LORA_WEIGHTS_RESPONSE:
+-            print(f"Received LoRA weights from {sender_ip}")
+-            
++            print(f"Received LoRA weights from {src_ip}")
++
+             try:
+                 buffer = io.BytesIO(message.payload)
+                 worker_weights = torch.load(buffer, map_location='cpu')
+-                LORA_WEIGHTS_CACHE[sender_ip] = worker_weights
++                LORA_WEIGHTS_CACHE[src_ip] = worker_weights
+                 
+                 expected_workers = len([ip for ip in DEVICE_MANAGER.devices.keys() 
+                                       if ip != list(DEVICE_MANAGER.devices.keys())[0]])
+@@ -216,7 +223,7 @@ def _worker_message_handler(sender_ip: str, message: Message):
+                 result_message = Message(
+                     message_type=MessageType.BENCHMARK_RESULT,
+                     payload=result_payload,
+-                    metadata={}
++                    metadata={"src_ip": SELF_HOST_IP}
+                 )
+ 
+                 NETWORK_MANAGER.send_message(coordinator_ip, 29500, result_message)
+@@ -247,7 +254,7 @@ def _worker_message_handler(sender_ip: str, message: Message):
+                 ready_message = Message(
+                     message_type=MessageType.WORKER_READY,
+                     payload=b"",
+-                    metadata={"rank": config.device_rank}
++                    metadata={"rank": config.device_rank, "src_ip": SELF_HOST_IP}
+                 )
+                 NETWORK_MANAGER.send_message(config.master_ip, 29500, ready_message)
+                 print(f"✅ Sent WORKER_READY signal to coordinator {config.master_ip}")
+@@ -342,7 +349,7 @@ def _worker_message_handler(sender_ip: str, message: Message):
+                 response_message = Message(
+                     message_type=MessageType.LORA_WEIGHTS_RESPONSE,
+                     payload=weights_payload,
+-                    metadata={"num_parameters": len(lora_weights)}
++                    metadata={"num_parameters": len(lora_weights), "src_ip": SELF_HOST_IP}
+                 )
+                 
+                 # --- FIX: Send to Master, NOT Sender ---
+@@ -421,13 +428,18 @@ def save_lora_adapters(
      print(f"  target_modules          : {target_modules}")
      print(f"  r (rank)                : {lora_rank}")
  
@@ -11,9 +88,18 @@ index 34ba3b4..9005c76 100644
 +    return (p[:-4] + ".summary.csv") if p.endswith(".csv") else (p + ".summary.csv")
 +
  def run_coordinator(args):
-     global NETWORK_MANAGER, DEVICE_MANAGER, PIPELINE_ENGINE
+-    global NETWORK_MANAGER, DEVICE_MANAGER, PIPELINE_ENGINE
++    global NETWORK_MANAGER, DEVICE_MANAGER, PIPELINE_ENGINE, SELF_HOST_IP
  
-@@ -442,11 +446,11 @@ def run_coordinator(args):
+     worker_ips = args.workers.split(',')
+     assert len(worker_ips) > 0, "❌ No worker IPs provided"
+ 
+     coordinator_ip = args.host_ip
++    SELF_HOST_IP = args.host_ip
+     all_device_ips = [coordinator_ip] + worker_ips
+     print(f"✅ Starting coordinator for cluster: {all_device_ips}")
+     
+@@ -442,11 +454,11 @@ def run_coordinator(args):
      logging.basicConfig(level=logging.INFO, stream=sys.stdout, force=True)
  
  
@@ -27,7 +113,7 @@ index 34ba3b4..9005c76 100644
      DEVICE_MANAGER = DeviceManager(all_device_ips, model_config)
  
      remote_worker_ips = worker_ips
-@@ -477,7 +481,7 @@ def run_coordinator(args):
+@@ -477,7 +489,7 @@ def run_coordinator(args):
          sys.exit(1)
  
      print("✅ Computing model partition...")
@@ -36,7 +122,7 @@ index 34ba3b4..9005c76 100644
  
      print("✅ Sending configurations to workers...")
      
-@@ -565,26 +569,79 @@ def run_coordinator(args):
+@@ -565,26 +577,79 @@ def run_coordinator(args):
      if tokenizer.pad_token is None:
          tokenizer.pad_token = tokenizer.eos_token
  
@@ -133,16 +219,21 @@ index 34ba3b4..9005c76 100644
  
      print("✅ Training complete. Starting model reconstruction...")
      
-@@ -846,7 +903,7 @@ def run_worker(args):
-     global NETWORK_MANAGER
+@@ -843,10 +908,11 @@ def run_coordinator(args):
+ #     print(f"Created model index with {len(weight_map)} weights")
  
+ def run_worker(args):
+-    global NETWORK_MANAGER
++    global NETWORK_MANAGER, SELF_HOST_IP
+ 
++    SELF_HOST_IP = args.host_ip
      print("✅ Starting worker node...")
 -    NETWORK_MANAGER = NetworkManager("0.0.0.0", 29500, _worker_message_handler)
 +    NETWORK_MANAGER = NetworkManager(args.host_ip or "0.0.0.0", 29500, _worker_message_handler)
      NETWORK_MANAGER.start_server()
  
      print("✅ Worker ready, waiting for commands...")
-@@ -864,15 +921,58 @@ if __name__ == "__main__":
+@@ -864,15 +930,58 @@ if __name__ == "__main__":
      parser.add_argument("--workers", type=str,
                        help="Comma-separated list of worker IPs (coordinator only)")
      parser.add_argument("--host-ip", type=str,

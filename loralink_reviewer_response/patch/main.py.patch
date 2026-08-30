@@ -1,5 +1,5 @@
 diff --git a/main.py b/main.py
-index 34ba3b4..6c5d486 100644
+index 34ba3b4..f4a72aa 100644
 --- a/main.py
 +++ b/main.py
 @@ -63,6 +63,9 @@ ALL_WEIGHTS_RECEIVED = threading.Event()
@@ -129,7 +129,7 @@ index 34ba3b4..6c5d486 100644
 -    train_loader = data_loader.get_data_loader(tokenizer, num_samples=100, dataset_name=args.dataset)
 +    train_loader = data_loader.get_data_loader(
 +        tokenizer, num_samples=args.num_samples, dataset_name=args.dataset,
-+        split="train", eval_holdout=args.eval_holdout)
++        split="train", eval_holdout=args.eval_holdout, seed=args.seed)
 +
 +    from loralink_reviewer_response.metrics_logger import (
 +        append_rows, RUN_COLUMNS, SUMMARY_COLUMNS)

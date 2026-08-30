@@ -1,6 +1,6 @@
 import torch
 from datasets import load_dataset
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 
@@ -73,6 +73,7 @@ def get_data_loader(
     *,
     split: str = "train",
     eval_holdout: int = 0,
+    seed: Optional[int] = None,
 ) -> torch.utils.data.DataLoader:
     assert isinstance(tokenizer, PreTrainedTokenizerBase)
     assert isinstance(num_samples, int) and num_samples > 0
@@ -142,8 +143,21 @@ def get_data_loader(
         bounds = (0, end, "train")
     print(f"📐 slice bounds: {bounds}")
 
-    dataloader = torch.utils.data.DataLoader(subset_dataset, batch_size=1, shuffle=False)
+    # Training shuffles under a generator seeded from --seed, so each seed is a
+    # genuinely different run and the cross-seed std/CI measures run-to-run
+    # variability rather than just LoRA's init. Evaluation stays ordered so
+    # held-out metrics are comparable across runs. Batch size stays 1, per the
+    # paper's hyperparameter table.
+    shuffle = split == "train" and seed is not None
+    generator = None
+    if shuffle:
+        generator = torch.Generator()
+        generator.manual_seed(int(seed))
+
+    dataloader = torch.utils.data.DataLoader(
+        subset_dataset, batch_size=1, shuffle=shuffle, generator=generator)
     dataloader.slice_bounds = bounds
-    print(f"✅ DataLoader ready: {len(subset_dataset)} samples")
+    print(f"✅ DataLoader ready: {len(subset_dataset)} samples "
+          f"(shuffle={shuffle}{f', seed={seed}' if shuffle else ''})")
 
     return dataloader

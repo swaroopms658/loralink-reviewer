@@ -579,7 +579,7 @@ def run_coordinator(args):
 
     train_loader = data_loader.get_data_loader(
         tokenizer, num_samples=args.num_samples, dataset_name=args.dataset,
-        split="train", eval_holdout=args.eval_holdout)
+        split="train", eval_holdout=args.eval_holdout, seed=args.seed)
 
     from loralink_reviewer_response.metrics_logger import (
         append_rows, RUN_COLUMNS, SUMMARY_COLUMNS)

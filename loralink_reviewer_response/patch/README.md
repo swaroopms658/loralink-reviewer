@@ -21,6 +21,26 @@ hold-out split, and a benchmark fast-path. None of it touches the optimizer,
 the LoRA math, the compression math, or the wire format. Default behaviour is
 unchanged. This is the reviewer-response harness proper.
 
+## 1b. Seeded shuffling of the training order
+
+`data_loader.py`. Listed separately because it is an experimental-design change
+rather than a bug fix or pure instrumentation.
+
+The loader built its `DataLoader` with `shuffle=False`, so every seed trained on
+the same samples in the same order. The only seed-dependent quantity was LoRA's
+`A` initialization, and because `B` starts at zero and 60 steps at lr 1e-4 barely
+move it, five seeds produced a cross-seed std of **0.0016** on a loss of 4.77 —
+evidence that the code is deterministic, not that the results are robust, which
+is what R3.4 / R3-Q7 actually ask for.
+
+`get_data_loader` now takes `seed=` and shuffles the **training** split under a
+`torch.Generator` seeded from `--seed`. Evaluation is never shuffled, so held-out
+metrics stay comparable across runs, and batch size remains 1 as specified in the
+paper's hyperparameter table. The paper reports single runs per configuration and
+explicitly defers variance reporting, so no published number is contradicted.
+
+Regression guard: `tests/test_seeded_shuffle.py`.
+
 ## 2. Forward-pass correctness fix (2 files)
 
 `pipeline_engine.py`, `model_registry.py`.

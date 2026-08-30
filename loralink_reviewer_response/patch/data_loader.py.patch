@@ -1,7 +1,15 @@
 diff --git a/data_loader.py b/data_loader.py
-index 1650c0b..1432081 100644
+index 1650c0b..a49dc44 100644
 --- a/data_loader.py
 +++ b/data_loader.py
+@@ -1,6 +1,6 @@
+ import torch
+ from datasets import load_dataset
+-from typing import Dict, Any
++from typing import Dict, Any, Optional
+ from transformers import AutoTokenizer, PreTrainedTokenizerBase
+ 
+ 
 @@ -37,7 +37,10 @@ def _format_e2e(examples: Dict[str, Any]) -> Dict[str, Any]:
  
  DATASET_REGISTRY: Dict[str, Dict[str, Any]] = {
@@ -14,21 +22,25 @@ index 1650c0b..1432081 100644
          "config": "wikitext-2-raw-v1",
          "formatter": _format_wikitext,
          "remove_columns": ["text"],
-@@ -67,6 +70,9 @@ def get_data_loader(
+@@ -67,6 +70,10 @@ def get_data_loader(
      tokenizer: AutoTokenizer,
      num_samples: int = 5,
      dataset_name: str = "wikitext",
 +    *,
 +    split: str = "train",
 +    eval_holdout: int = 0,
++    seed: Optional[int] = None,
  ) -> torch.utils.data.DataLoader:
      assert isinstance(tokenizer, PreTrainedTokenizerBase)
      assert isinstance(num_samples, int) and num_samples > 0
-@@ -106,9 +112,38 @@ def get_data_loader(
+@@ -106,9 +113,51 @@ def get_data_loader(
      tokenized_dataset = dataset.map(tokenize_function, batched=True, remove_columns=remove_cols)
      tokenized_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
  
 -    subset_dataset = tokenized_dataset.select(range(min(num_samples, len(tokenized_dataset))))
+-
+-    dataloader = torch.utils.data.DataLoader(subset_dataset, batch_size=1, shuffle=False)
+-    print(f"✅ DataLoader ready: {len(subset_dataset)} samples")
 +    total = len(tokenized_dataset)
 +    if split == "eval":
 +        val = None
@@ -58,9 +70,22 @@ index 1650c0b..1432081 100644
 +        subset_dataset = tokenized_dataset.select(range(0, end))
 +        bounds = (0, end, "train")
 +    print(f"📐 slice bounds: {bounds}")
- 
-     dataloader = torch.utils.data.DataLoader(subset_dataset, batch_size=1, shuffle=False)
++
++    # Training shuffles under a generator seeded from --seed, so each seed is a
++    # genuinely different run and the cross-seed std/CI measures run-to-run
++    # variability rather than just LoRA's init. Evaluation stays ordered so
++    # held-out metrics are comparable across runs. Batch size stays 1, per the
++    # paper's hyperparameter table.
++    shuffle = split == "train" and seed is not None
++    generator = None
++    if shuffle:
++        generator = torch.Generator()
++        generator.manual_seed(int(seed))
++
++    dataloader = torch.utils.data.DataLoader(
++        subset_dataset, batch_size=1, shuffle=shuffle, generator=generator)
 +    dataloader.slice_bounds = bounds
-     print(f"✅ DataLoader ready: {len(subset_dataset)} samples")
++    print(f"✅ DataLoader ready: {len(subset_dataset)} samples "
++          f"(shuffle={shuffle}{f', seed={seed}' if shuffle else ''})")
  
      return dataloader

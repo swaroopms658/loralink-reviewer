@@ -101,7 +101,7 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
                        seed=seed, num_samples=num_samples, epochs=epochs,
                        eval_holdout=eval_holdout, strategy=strategy, tag=tag,
                        csv_path=csv_path),
-            cwd=workdir, env=env, stderr=errf)
+            cwd=workdir, env=env, stdout=errf, stderr=subprocess.STDOUT)
         procs.append(coord)
         try:
             coord.wait(timeout=run_timeout_s)

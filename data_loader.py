@@ -37,7 +37,10 @@ def _format_e2e(examples: Dict[str, Any]) -> Dict[str, Any]:
 
 DATASET_REGISTRY: Dict[str, Dict[str, Any]] = {
     "wikitext": {
-        "path": "wikitext",
+        # canonical namespaced id: newer huggingface_hub rejects the bare
+        # "wikitext" ("Repository id must be 'namespace/name'"). Same parquet
+        # data, splits train/validation/test.
+        "path": "Salesforce/wikitext",
         "config": "wikitext-2-raw-v1",
         "formatter": _format_wikitext,
         "remove_columns": ["text"],

@@ -1,8 +1,20 @@
 diff --git a/data_loader.py b/data_loader.py
-index 1650c0b..af0c18f 100644
+index 1650c0b..1432081 100644
 --- a/data_loader.py
 +++ b/data_loader.py
-@@ -67,6 +67,9 @@ def get_data_loader(
+@@ -37,7 +37,10 @@ def _format_e2e(examples: Dict[str, Any]) -> Dict[str, Any]:
+ 
+ DATASET_REGISTRY: Dict[str, Dict[str, Any]] = {
+     "wikitext": {
+-        "path": "wikitext",
++        # canonical namespaced id: newer huggingface_hub rejects the bare
++        # "wikitext" ("Repository id must be 'namespace/name'"). Same parquet
++        # data, splits train/validation/test.
++        "path": "Salesforce/wikitext",
+         "config": "wikitext-2-raw-v1",
+         "formatter": _format_wikitext,
+         "remove_columns": ["text"],
+@@ -67,6 +70,9 @@ def get_data_loader(
      tokenizer: AutoTokenizer,
      num_samples: int = 5,
      dataset_name: str = "wikitext",
@@ -12,7 +24,7 @@ index 1650c0b..af0c18f 100644
  ) -> torch.utils.data.DataLoader:
      assert isinstance(tokenizer, PreTrainedTokenizerBase)
      assert isinstance(num_samples, int) and num_samples > 0
-@@ -106,9 +109,38 @@ def get_data_loader(
+@@ -106,9 +112,38 @@ def get_data_loader(
      tokenized_dataset = dataset.map(tokenize_function, batched=True, remove_columns=remove_cols)
      tokenized_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
  

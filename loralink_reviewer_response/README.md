@@ -11,11 +11,13 @@ sessions in parallel across Gmail accounts). Every reported number is tagged
 results — the harness patch is additive flags, a lossless-only compression
 toggle, extra partitioners, metric logging, and an eval script.
 
-> **One behaviour change was necessary.** The pipeline's forward pass was missing
-> the final normalization layer (and, for GPT-Neo, the learned position
+> **Two behaviour changes were necessary.** The pipeline's forward pass was
+> missing the final normalization layer (and, for GPT-Neo, the learned position
 > embedding), which inflated cross-entropy into the thousands and prevented
-> convergence entirely. That is a correctness fix, not tuning, and it is
-> documented in full — with the measurements that found it — in
+> convergence entirely; and the loss was scored over padding, so the model
+> learned to emit `<pad>` rather than language. Both are correctness fixes, not
+> tuning, and both are documented in full — with the measurements that found
+> them — in
 > [`patch/README.md`](patch/README.md). It changes results relative to the
 > paper's published figures; see that file's "Bearing on the paper" note.
 

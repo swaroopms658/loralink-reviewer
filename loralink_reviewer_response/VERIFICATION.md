@@ -224,6 +224,7 @@ surfaced that no offline test could have caught; all four are fixed.
 | 2 | coordinator exited 1 after 30 s, "Failed to get results from `['127.0.0.2','127.0.0.3']`" | on loopback every `127.0.0.x` client's connection is seen by `accept()` as `127.0.0.1`, so all workers collapsed to one identity | workers stamp `metadata["src_ip"]`; coordinator prefers it over the socket peer |
 | 3 | `HfUriError: Repository id must be 'namespace/name'` | newer `huggingface_hub` rejects the bare `wikitext` id | `Salesforce/wikitext` |
 | 4 | **loss 2 000–11 000, no convergence** | forward pass omitted the final norm and GPT-Neo's `wpe` | see `patch/README.md` §2 |
+| 5 | after fixing 4: loss fell 10.29 → **0.22** in 60 steps | `cross_entropy` scored the padding `data_loader` adds to 256 tokens; model learned "emit padding" | `build_masked_labels` + `ignore_index=-100`, `patch/README.md` §2b |
 
 Defect 4 is the significant one. Evidence that isolated it, both arms 25 batches
 on gpt-neo-125M:
@@ -238,12 +239,13 @@ model at 5 479 (correct ≈ 4–6, uniform-random ≈ ln 50257 ≈ 10.8) ⇒ log
 inflated ~500×, i.e. a missing normalization, confirmed against
 `transformers.models.gpt_neo.modeling_gpt_neo.GPTNeoModel.forward`.
 
-A 5-seed NB01 shard was run before the fix and is **discarded** — its numbers
-measure the broken forward pass. All result CSVs must be regenerated on the
-fixed code.
+Two 5-seed NB01 shards were run during this investigation — one before any fix
+(loss ~5 300) and one after the norm fix but before the padding fix (loss 10.29 →
+0.22). **Both are discarded.** All result CSVs must be regenerated on the fixed
+code.
 
-Offline suite after the fix: **89 passed, 2 deselected** (was 76 + 2; the 13 new
-tests are `tests/test_final_norm.py`).
+Offline suite after both fixes: **96 passed, 2 deselected** (was 76 + 2; the 20
+new tests are `tests/test_final_norm.py` and `tests/test_loss_masking.py`).
 
 ---
 

@@ -1,8 +1,33 @@
 diff --git a/pipeline_engine.py b/pipeline_engine.py
-index 434e2be..cfd6657 100644
+index 434e2be..c17db0a 100644
 --- a/pipeline_engine.py
 +++ b/pipeline_engine.py
-@@ -35,7 +35,10 @@ class PipelineStage:
+@@ -15,6 +15,24 @@ import gc
+ import threading
+ from model_registry import ModelRegistry, ModelArchitecture, ArchitectureInfo
+ 
++# Label value that cross_entropy skips. data_loader pads to max_length, so without
++# this the loss averages over mostly-PAD positions and the model just learns to
++# emit padding -- the loss collapses toward 0 without learning the language.
++IGNORE_INDEX = -100
++
++
++def build_masked_labels(input_ids: torch.Tensor,
++                        attention_mask: Optional[torch.Tensor]) -> torch.Tensor:
++    """Next-token labels with padded positions set to IGNORE_INDEX.
++
++    Returns a fresh tensor; `input_ids` is never written through.
++    """
++    labels = input_ids.clone()
++    if attention_mask is None:
++        return labels
++    return labels.masked_fill(attention_mask.to(labels.device) == 0, IGNORE_INDEX)
++
++
+ class PipelineStage:
+     def __init__(self, config: PipelineConfig, network_manager: NetworkManager):
+         # 1. SETUP DEVICE DYNAMICALLY (Supports CPU, GPU, or Mixed)
+@@ -35,7 +53,10 @@ class PipelineStage:
          )
  
          # 2. LOAD MODEL PARTS
@@ -14,7 +39,7 @@ index 434e2be..cfd6657 100644
  
          # Architecture-aware target modules — cover attention AND MLP projections.
          if self.architecture == ModelArchitecture.GPT_NEO:
-@@ -75,7 +78,8 @@ class PipelineStage:
+@@ -75,7 +96,8 @@ class PipelineStage:
                          del self.forward_cache[key]
                  gc.collect()
  
@@ -24,7 +49,7 @@ index 434e2be..cfd6657 100644
          # Use model_name from config (passed from device_manager)
          model_path = f"./models/{self.config.model_name}"
          safetensors_path = f"{model_path}/model.safetensors"
-@@ -151,7 +155,25 @@ class PipelineStage:
+@@ -151,7 +173,25 @@ class PipelineStage:
              with torch.device('meta'):
                  lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
  
@@ -51,7 +76,7 @@ index 434e2be..cfd6657 100644
          gc.collect()
          
          print(f"Lazy loading weights from {safetensors_path}")
-@@ -301,7 +323,63 @@ class PipelineStage:
+@@ -301,7 +341,63 @@ class PipelineStage:
                  import traceback
                  traceback.print_exc()
                  raise
@@ -116,7 +141,7 @@ index 434e2be..cfd6657 100644
          # Close all open shard handles and free the shard index
          for h in shard_handles.values():
              del h
-@@ -333,7 +411,7 @@ class PipelineStage:
+@@ -333,7 +429,7 @@ class PipelineStage:
          else:
              self.rotary_emb = None
          
@@ -125,12 +150,15 @@ index 434e2be..cfd6657 100644
  
      def forward_step_local(self, micro_batch_id: int, batch: Dict[str, torch.Tensor]):
          assert isinstance(micro_batch_id, int)
-@@ -352,8 +430,19 @@ class PipelineStage:
+@@ -351,9 +447,21 @@ class PipelineStage:
+         #GPU CHANGE
          input_ids = batch['input_ids'].to(self.device)
  
-         labels = input_ids.clone()
+-        labels = input_ids.clone()
 -                
 -        hidden_states = self.embedding_layer(input_ids).detach()
++        # Padded positions are excluded from the loss (data_loader pads to 256).
++        labels = build_masked_labels(input_ids, batch.get('attention_mask'))
 +
 +        # Reference embedding composition: hidden = wte(ids) + wpe(pos).
 +        # position_embedding is None for RoPE architectures, which apply position
@@ -147,7 +175,7 @@ index 434e2be..cfd6657 100644
          hidden_states.requires_grad_(True)
          
          with self.cache_lock:
-@@ -415,7 +504,11 @@ class PipelineStage:
+@@ -415,7 +523,11 @@ class PipelineStage:
              with self.cache_lock:
                  labels = self.forward_cache[micro_batch_id]['labels']
  
@@ -160,7 +188,15 @@ index 434e2be..cfd6657 100644
  
              # Causal LM label shifting: predict token[i+1] from token[i].
              # logits[:, :-1] aligns with labels[:, 1:] (next-token targets).
-@@ -542,7 +635,11 @@ class PipelineStage:
+@@ -424,6 +536,7 @@ class PipelineStage:
+             loss = F.cross_entropy(
+                 shift_logits.view(-1, shift_logits.size(-1)),
+                 shift_labels.view(-1),
++                ignore_index=IGNORE_INDEX,
+             )
+ 
+             print(f"Loss for micro-batch {micro_batch_id}: {loss.item():.4f}")
+@@ -542,7 +655,11 @@ class PipelineStage:
  
              labels = labels.to(self.device)
  
@@ -173,3 +209,11 @@ index 434e2be..cfd6657 100644
  
              # Causal LM label shifting: predict token[i+1] from token[i].
              shift_logits = logits[:, :-1, :].contiguous().float()
+@@ -550,6 +667,7 @@ class PipelineStage:
+             loss = F.cross_entropy(
+                 shift_logits.view(-1, shift_logits.size(-1)),
+                 shift_labels.view(-1),
++                ignore_index=IGNORE_INDEX,
+             )
+ 
+             print(f"Loss for micro-batch {micro_batch_id}: {loss.item():.4f}")

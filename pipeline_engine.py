@@ -15,6 +15,24 @@ import gc
 import threading
 from model_registry import ModelRegistry, ModelArchitecture, ArchitectureInfo
 
+# Label value that cross_entropy skips. data_loader pads to max_length, so without
+# this the loss averages over mostly-PAD positions and the model just learns to
+# emit padding -- the loss collapses toward 0 without learning the language.
+IGNORE_INDEX = -100
+
+
+def build_masked_labels(input_ids: torch.Tensor,
+                        attention_mask: Optional[torch.Tensor]) -> torch.Tensor:
+    """Next-token labels with padded positions set to IGNORE_INDEX.
+
+    Returns a fresh tensor; `input_ids` is never written through.
+    """
+    labels = input_ids.clone()
+    if attention_mask is None:
+        return labels
+    return labels.masked_fill(attention_mask.to(labels.device) == 0, IGNORE_INDEX)
+
+
 class PipelineStage:
     def __init__(self, config: PipelineConfig, network_manager: NetworkManager):
         # 1. SETUP DEVICE DYNAMICALLY (Supports CPU, GPU, or Mixed)
@@ -429,7 +447,8 @@ class PipelineStage:
         #GPU CHANGE
         input_ids = batch['input_ids'].to(self.device)
 
-        labels = input_ids.clone()
+        # Padded positions are excluded from the loss (data_loader pads to 256).
+        labels = build_masked_labels(input_ids, batch.get('attention_mask'))
 
         # Reference embedding composition: hidden = wte(ids) + wpe(pos).
         # position_embedding is None for RoPE architectures, which apply position
@@ -517,6 +536,7 @@ class PipelineStage:
             loss = F.cross_entropy(
                 shift_logits.view(-1, shift_logits.size(-1)),
                 shift_labels.view(-1),
+                ignore_index=IGNORE_INDEX,
             )
 
             print(f"Loss for micro-batch {micro_batch_id}: {loss.item():.4f}")
@@ -647,6 +667,7 @@ class PipelineStage:
             loss = F.cross_entropy(
                 shift_logits.view(-1, shift_logits.size(-1)),
                 shift_labels.view(-1),
+                ignore_index=IGNORE_INDEX,
             )
 
             print(f"Loss for micro-batch {micro_batch_id}: {loss.item():.4f}")

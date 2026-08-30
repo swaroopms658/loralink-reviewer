@@ -200,13 +200,16 @@ Nothing here indicates a packaging defect — it is the direct consequence of th
 python -m pip install -r loralink_reviewer_response/requirements-colab.txt --dry-run
 ```
 
-Resolved cleanly (exit 0) on Python 3.12 — no version bumps required. Pins are
-left **as specified** (transformers 4.44.2, datasets 2.21.0, accelerate 0.34.2,
-peft 0.12.0, evaluate 0.4.2, rouge-score 0.1.2, sacrebleu 2.4.3, scipy 1.13.1,
-pandas 2.2.2, matplotlib 3.9.2, zstandard 0.23.0, psutil 6.0.0). A full install +
-import was **not** exercised against an actual Colab runtime (Python 3.10/3.11 +
-preinstalled CUDA stack); the pins are the versions known-good on Colab Free at
-authoring time and are installed unchanged by notebook cell 1.
+**Superseded.** The original full pin set (transformers 4.44.2, scipy 1.13.1,
+pandas 2.2.2, matplotlib 3.9.2, accelerate 0.34.2, psutil 6.0.0, …) resolved
+cleanly under `--dry-run` on Python 3.12 but on a **live Colab Free run stalled
+pip for 20+ min** — downgrading Colab's preinstalled CUDA `torch` stack sent the
+resolver into a backtrack. `requirements-colab.txt` was cut down to only the
+packages Colab lacks: `datasets==2.21.0`, `peft==0.12.0`, `evaluate==0.4.2`,
+`rouge-score==0.1.2`, `sacrebleu==2.4.3`, `zstandard==0.23.0`. Colab's own
+`torch`/`transformers`/`accelerate`/`scipy`/`pandas`/`matplotlib`/`numpy`/`psutil`
+are used as shipped. A full install + import + run against a live Colab runtime
+is still pending confirmation.
 
 ---
 

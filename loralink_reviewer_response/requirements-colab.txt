@@ -1,12 +1,12 @@
-transformers==4.44.2
+# Colab Free already ships working versions of torch, transformers, accelerate,
+# scipy, pandas, matplotlib, numpy and psutil. Pinning/downgrading those forces
+# pip's resolver into a ~20-min backtrack against Colab's CUDA torch build, so we
+# leave them alone and install ONLY what Colab lacks. `datasets` is pinned
+# because the 3.x line dropped script-based dataset loading that GEM/e2e_nlg
+# still uses.
 datasets==2.21.0
-accelerate==0.34.2
 peft==0.12.0
 evaluate==0.4.2
 rouge-score==0.1.2
 sacrebleu==2.4.3
-scipy==1.13.1
-pandas==2.2.2
-matplotlib==3.9.2
 zstandard==0.23.0
-psutil==6.0.0

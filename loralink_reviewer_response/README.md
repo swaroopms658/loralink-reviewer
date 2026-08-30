@@ -141,13 +141,13 @@ jupyter nbconvert --to notebook --execute \
   source file. Notebook cell 1 runs `patch/checksums.py --verify` (bare, no
   `--update`) — it checks the cloned tree against the committed `SHA256SUMS` and
   aborts the run on any mismatch.
-- Dependency pins: `requirements-colab.txt` — transformers 4.44.2, datasets
-  2.21.0, accelerate 0.34.2, peft 0.12.0, evaluate 0.4.2, rouge-score 0.1.2,
-  sacrebleu 2.4.3, scipy 1.13.1, pandas 2.2.2, matplotlib 3.9.2, zstandard
-  0.23.0, psutil 6.0.0. Installed unchanged on every Colab session. `pip install
-  -r … --dry-run` resolves cleanly; no bumps were needed. A full install +
-  import against a live Colab runtime (Python 3.10/3.11) has **not** been run —
-  see `VERIFICATION.md`.
+- Dependency pins: `requirements-colab.txt` installs **only what Colab Free
+  lacks** — `datasets` 2.21.0 (the 3.x line dropped the script-based loader
+  GEM/e2e_nlg needs), `peft` 0.12.0, `evaluate` 0.4.2, `rouge-score` 0.1.2,
+  `sacrebleu` 2.4.3, `zstandard` 0.23.0. Colab's own `torch`, `transformers`,
+  `accelerate`, `scipy`, `pandas`, `matplotlib`, `numpy`, `psutil` are left as
+  shipped; pinning/downgrading them forced pip into a ~20-min resolver backtrack
+  against Colab's CUDA torch build (observed on a live run).
 - Branch: `reviewer-response-abhay-nikhil`.
 - Each notebook writes a `run_manifest_*.json` with the account tag, shard,
   runs-completed-vs-planned, and the `SHA256SUMS` contents.

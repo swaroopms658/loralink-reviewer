@@ -108,13 +108,20 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
         except subprocess.TimeoutExpired:
             raise TimeoutError(f"run '{tag}' exceeded {run_timeout_s}s")
         if coord.returncode != 0:
-            _errlines = []
+            _err = ""
             with contextlib.suppress(Exception):
                 errf.seek(0)
-                _errlines = [ln.strip() for ln in errf.read().splitlines() if ln.strip()]
-            _tail = _errlines[-1] if _errlines else "(no stderr)"
+                _err = errf.read()
+            with contextlib.suppress(Exception):
+                csv_path.with_name(csv_path.name + ".coord.err").write_text(_err)
+            _lines = [ln for ln in _err.splitlines() if ln.strip()]
+            # skip trailing library log noise (INFO:/WARNING:) to find the real cause
+            _sig = [ln for ln in _lines
+                    if not ln.lstrip().startswith(("INFO:", "WARNING:", "DEBUG:"))]
+            _tail = "\n".join((_sig or _lines)[-25:]) or "(no stderr)"
             raise RuntimeError(
-                f"coordinator exited {coord.returncode} for run '{tag}': {_tail}")
+                f"coordinator exited {coord.returncode} for run '{tag}':\n{_tail}\n"
+                f"(full stderr: {csv_path.name}.coord.err)")
 
         if save_adapters_to:
             src = workdir / "lora_adapters"

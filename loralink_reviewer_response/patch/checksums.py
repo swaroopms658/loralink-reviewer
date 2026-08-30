@@ -1,7 +1,13 @@
-"""Record / verify SHA-256 of the five patched LoraLink source files."""
+"""Record / verify SHA-256 of every LoraLink source file that determines results.
+
+The first five carry the additive reviewer-response instrumentation. The last two
+carry the forward-pass correctness fix (restoring the final norm and GPT-Neo's
+learned position embedding) -- see patch/README.md.
+"""
 import hashlib, json, sys, pathlib
 FILES = ["main.py", "device_manager.py", "compression_engine.py",
-         "benchmarking.py", "data_loader.py"]
+         "benchmarking.py", "data_loader.py",
+         "pipeline_engine.py", "model_registry.py"]
 
 def _sha(p): return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
 

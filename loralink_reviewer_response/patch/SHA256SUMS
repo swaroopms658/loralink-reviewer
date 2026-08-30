@@ -3,5 +3,7 @@
   "device_manager.py": "347f6ef6369acd8b2ce190a728266fcc30e977159876dff3460b411cc9856dd5",
   "compression_engine.py": "cd3bf5d54f0b291eff49508cf707f3c36c1be0a4dd3aecaa558a5a4a78a8b41d",
   "benchmarking.py": "d1c32a1aca59870982e3e32a9f25fc1b22aef8911f8b8872c643b052e7083f6e",
-  "data_loader.py": "116ab6d01038d372e28cbe2201877475ccf6451dc18602233421e78290897e33"
+  "data_loader.py": "116ab6d01038d372e28cbe2201877475ccf6451dc18602233421e78290897e33",
+  "pipeline_engine.py": "5d85f45938fc0adc081290e1f4e51433b4f7a47cab1af61a388157ec9bce7d56",
+  "model_registry.py": "74d469922f1bebeb77468676f71903ef25d331e7a17dc19debc1419dd9ddedb0"
 }

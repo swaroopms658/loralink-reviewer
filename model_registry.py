@@ -33,6 +33,15 @@ class ArchitectureInfo:
     hidden_size_attr: str  # config attribute name for hidden dimension
     block_class_name: str  # Name of the transformer block class
     uses_tied_embeddings: bool  # Whether LM head shares weights with embeddings
+    # Final normalization applied after the last block and BEFORE the LM head
+    # (reference: ``hidden = ln_f(hidden); logits = lm_head(hidden)``). Omitting
+    # it leaves the residual stream unnormalized at the unembedding, which
+    # inflates logits by ~2 orders of magnitude.
+    final_norm_prefix: str = ""  # e.g. "transformer.ln_f", "model.norm"
+    final_norm_class_name: str = "LayerNorm"  # torch nn.LayerNorm, or *RMSNorm
+    # Learned absolute position embedding, added to the token embedding at rank 0.
+    # None for RoPE architectures, which inject position inside each block.
+    position_embedding_key: Optional[str] = None
 
 
 # Architecture patterns
@@ -45,7 +54,10 @@ ARCHITECTURE_PATTERNS = {
         num_layers_attr="num_layers",
         hidden_size_attr="hidden_size",
         block_class_name="GPTNeoBlock",
-        uses_tied_embeddings=True
+        uses_tied_embeddings=True,
+        final_norm_prefix="transformer.ln_f",
+        final_norm_class_name="LayerNorm",
+        position_embedding_key="transformer.wpe.weight",
     ),
     ModelArchitecture.LLAMA: ArchitectureInfo(
         architecture=ModelArchitecture.LLAMA,
@@ -55,7 +67,9 @@ ARCHITECTURE_PATTERNS = {
         num_layers_attr="num_hidden_layers",
         hidden_size_attr="hidden_size",
         block_class_name="LlamaDecoderLayer",
-        uses_tied_embeddings=False
+        uses_tied_embeddings=False,
+        final_norm_prefix="model.norm",
+        final_norm_class_name="LlamaRMSNorm",
     ),
     ModelArchitecture.MISTRAL: ArchitectureInfo(
         architecture=ModelArchitecture.MISTRAL,
@@ -65,7 +79,9 @@ ARCHITECTURE_PATTERNS = {
         num_layers_attr="num_hidden_layers",
         hidden_size_attr="hidden_size",
         block_class_name="MistralDecoderLayer",
-        uses_tied_embeddings=False
+        uses_tied_embeddings=False,
+        final_norm_prefix="model.norm",
+        final_norm_class_name="MistralRMSNorm",
     ),
     ModelArchitecture.QWEN2: ArchitectureInfo(
         architecture=ModelArchitecture.QWEN2,
@@ -75,7 +91,9 @@ ARCHITECTURE_PATTERNS = {
         num_layers_attr="num_hidden_layers",
         hidden_size_attr="hidden_size",
         block_class_name="Qwen2DecoderLayer",
-        uses_tied_embeddings=False
+        uses_tied_embeddings=False,
+        final_norm_prefix="model.norm",
+        final_norm_class_name="Qwen2RMSNorm",
     ),
     ModelArchitecture.PHI: ArchitectureInfo(
         architecture=ModelArchitecture.PHI,
@@ -85,8 +103,20 @@ ARCHITECTURE_PATTERNS = {
         num_layers_attr="num_hidden_layers",
         hidden_size_attr="hidden_size",
         block_class_name="PhiDecoderLayer",
-        uses_tied_embeddings=False
+        uses_tied_embeddings=False,
+        final_norm_prefix="model.final_layernorm",
+        final_norm_class_name="LayerNorm",
     ),
+}
+
+# Where each architecture's reference implementation lives, for dynamic imports
+# of block and norm classes.
+MODELING_MODULES = {
+    ModelArchitecture.GPT_NEO: "transformers.models.gpt_neo.modeling_gpt_neo",
+    ModelArchitecture.LLAMA: "transformers.models.llama.modeling_llama",
+    ModelArchitecture.MISTRAL: "transformers.models.mistral.modeling_mistral",
+    ModelArchitecture.QWEN2: "transformers.models.qwen2.modeling_qwen2",
+    ModelArchitecture.PHI: "transformers.models.phi.modeling_phi",
 }
 
 
@@ -157,17 +187,8 @@ class ModelRegistry:
         arch_info = ARCHITECTURE_PATTERNS.get(architecture)
         if arch_info is None:
             raise ValueError(f"Unknown architecture: {architecture}")
-        
-        # Map architecture to module path and class name
-        module_map = {
-            ModelArchitecture.GPT_NEO: "transformers.models.gpt_neo.modeling_gpt_neo",
-            ModelArchitecture.LLAMA: "transformers.models.llama.modeling_llama",
-            ModelArchitecture.MISTRAL: "transformers.models.mistral.modeling_mistral",
-            ModelArchitecture.QWEN2: "transformers.models.qwen2.modeling_qwen2",
-            ModelArchitecture.PHI: "transformers.models.phi.modeling_phi",
-        }
-        
-        module_path = module_map.get(architecture)
+
+        module_path = MODELING_MODULES.get(architecture)
         if module_path is None:
             raise ValueError(f"No module mapping for architecture: {architecture}")
         
@@ -175,9 +196,41 @@ class ModelRegistry:
         import importlib
         module = importlib.import_module(module_path)
         block_class = getattr(module, arch_info.block_class_name)
-        
+
         return block_class
-    
+
+    @staticmethod
+    def build_final_norm(config: PretrainedConfig, architecture: ModelArchitecture):
+        """Instantiate the architecture's final normalization layer.
+
+        Applied after the last transformer block and before the LM head, exactly
+        as the reference implementation does. GPT-Neo and Phi use ``nn.LayerNorm``;
+        LLaMA/Mistral/Qwen2 use their own RMSNorm class.
+        """
+        import torch.nn as nn
+
+        arch_info = ARCHITECTURE_PATTERNS.get(architecture)
+        if arch_info is None:
+            raise ValueError(f"Unknown architecture: {architecture}")
+
+        hidden_size = ModelRegistry.get_hidden_size(config, architecture)
+
+        if arch_info.final_norm_class_name == "LayerNorm":
+            # GPT-Neo names the epsilon layer_norm_epsilon, Phi layer_norm_eps.
+            eps = getattr(config, "layer_norm_epsilon",
+                          getattr(config, "layer_norm_eps", 1e-5))
+            return nn.LayerNorm(hidden_size, eps=eps)
+
+        module_path = MODELING_MODULES.get(architecture)
+        if module_path is None:
+            raise ValueError(f"No module mapping for architecture: {architecture}")
+
+        import importlib
+        module = importlib.import_module(module_path)
+        norm_class = getattr(module, arch_info.final_norm_class_name)
+        return norm_class(hidden_size, eps=getattr(config, "rms_norm_eps", 1e-6))
+
+
     @staticmethod
     def estimate_model_size(config: PretrainedConfig, architecture: ModelArchitecture) -> Dict[str, float]:
         """

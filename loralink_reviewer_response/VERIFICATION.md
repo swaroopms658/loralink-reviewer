@@ -213,6 +213,40 @@ is still pending confirmation.
 
 ---
 
+## 6. Live Colab run — what it found
+
+The package was executed on a real Colab Free T4 (2026-08-30). Four defects
+surfaced that no offline test could have caught; all four are fixed.
+
+| # | Symptom on Colab | Cause | Fix |
+|---|---|---|---|
+| 1 | `pip install` stalled 20+ min | pinning `torch`/`transformers`/`scipy`/… downgraded Colab's preinstalled CUDA stack, sending pip's resolver into a backtrack | `requirements-colab.txt` cut to only what Colab lacks |
+| 2 | coordinator exited 1 after 30 s, "Failed to get results from `['127.0.0.2','127.0.0.3']`" | on loopback every `127.0.0.x` client's connection is seen by `accept()` as `127.0.0.1`, so all workers collapsed to one identity | workers stamp `metadata["src_ip"]`; coordinator prefers it over the socket peer |
+| 3 | `HfUriError: Repository id must be 'namespace/name'` | newer `huggingface_hub` rejects the bare `wikitext` id | `Salesforce/wikitext` |
+| 4 | **loss 2 000–11 000, no convergence** | forward pass omitted the final norm and GPT-Neo's `wpe` | see `patch/README.md` §2 |
+
+Defect 4 is the significant one. Evidence that isolated it, both arms 25 batches
+on gpt-neo-125M:
+
+```
+compression OFF   first 5: [3895, 9150, 5006, 4479, 4008]   mean 6442.70
+compression ON    first 5: [5479, 8918, 5410, 5922, 3162]   mean 6591.78
+```
+
+Identical between arms ⇒ not the compression engine. Batch 0 of a *pretrained*
+model at 5 479 (correct ≈ 4–6, uniform-random ≈ ln 50257 ≈ 10.8) ⇒ logits
+inflated ~500×, i.e. a missing normalization, confirmed against
+`transformers.models.gpt_neo.modeling_gpt_neo.GPTNeoModel.forward`.
+
+A 5-seed NB01 shard was run before the fix and is **discarded** — its numbers
+measure the broken forward pass. All result CSVs must be regenerated on the
+fixed code.
+
+Offline suite after the fix: **89 passed, 2 deselected** (was 76 + 2; the 13 new
+tests are `tests/test_final_norm.py`).
+
+---
+
 ## NOT verified here — needs a Colab GPU session
 
 - **`@pytest.mark.colab` tests** (2, deselected in every run above):

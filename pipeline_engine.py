@@ -35,7 +35,10 @@ class PipelineStage:
         )
 
         # 2. LOAD MODEL PARTS
-        self.layers, self.embedding_layer, self.lm_head = self._load_model_parts()
+        # final_norm / position_embedding are frozen base-model parts, not LoRA
+        # targets: apply_lora_to_layers below only ever sees self.layers.
+        (self.layers, self.embedding_layer, self.lm_head,
+         self.final_norm, self.position_embedding) = self._load_model_parts()
 
         # Architecture-aware target modules — cover attention AND MLP projections.
         if self.architecture == ModelArchitecture.GPT_NEO:
@@ -75,7 +78,8 @@ class PipelineStage:
                         del self.forward_cache[key]
                 gc.collect()
 
-    def _load_model_parts(self) -> Tuple[nn.ModuleList, Optional[nn.Module], Optional[nn.Module]]:
+    def _load_model_parts(self) -> Tuple[nn.ModuleList, Optional[nn.Module], Optional[nn.Module],
+                                         Optional[nn.Module], Optional[nn.Module]]:
         # Use model_name from config (passed from device_manager)
         model_path = f"./models/{self.config.model_name}"
         safetensors_path = f"{model_path}/model.safetensors"
@@ -151,7 +155,25 @@ class PipelineStage:
             with torch.device('meta'):
                 lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
 
-        
+        # Create the final normalization layer (last device only). The reference
+        # forward is `hidden = ln_f(hidden); logits = lm_head(hidden)`; skipping it
+        # feeds an unnormalized residual stream to the unembedding, inflating logits
+        # by ~2 orders of magnitude and cross-entropy into the thousands.
+        final_norm = None
+        if self.config.successor_ip is None and arch_info.final_norm_prefix:
+            with torch.device('meta'):
+                final_norm = ModelRegistry.build_final_norm(model_config, architecture)
+
+        # Create the learned absolute position embedding (rank 0 only). GPT-Neo adds
+        # wte + wpe; RoPE architectures leave this None and inject position per block.
+        position_embedding = None
+        if self.config.device_rank == 0 and arch_info.position_embedding_key:
+            hidden_size = ModelRegistry.get_hidden_size(model_config, architecture)
+            max_pos = getattr(model_config, 'max_position_embeddings', 2048)
+            with torch.device('meta'):
+                position_embedding = nn.Embedding(max_pos, hidden_size)
+
+
         gc.collect()
         
         print(f"Lazy loading weights from {safetensors_path}")
@@ -301,7 +323,63 @@ class PipelineStage:
                 import traceback
                 traceback.print_exc()
                 raise
-        
+
+        # Load final-norm weights. Materialize first, then identity-init (weight 1,
+        # bias 0) so a missing key degrades to a no-op norm rather than the garbage
+        # that to_empty() leaves behind; real weights then overwrite via assign.
+        if final_norm is not None:
+            fn_prefix = arch_info.final_norm_prefix
+            print(f"Loading final norm weights ({fn_prefix})...")
+            final_norm.to_empty(device=self.device)
+            with torch.no_grad():
+                for pname, param in final_norm.named_parameters():
+                    param.fill_(1.0 if pname.endswith("weight") else 0.0)
+
+            fn_state = {}
+            for suffix in ("weight", "bias"):
+                key = f"{fn_prefix}.{suffix}"
+                if key in key_to_shard:
+                    tensor = get_tensor(key)
+                    if tensor is not None:
+                        fn_state[suffix] = tensor
+
+            if fn_state:
+                final_norm.load_state_dict(fn_state, strict=False, assign=True)
+                del fn_state
+                gc.collect()
+            else:
+                print(f"⚠️  Final norm {fn_prefix} not found in checkpoint — "
+                      f"using identity norm (logit scale will be wrong)")
+
+            final_norm.to(self.device)
+            # Frozen base-model parameters: only LoRA adapters train.
+            for param in final_norm.parameters():
+                param.requires_grad_(False)
+            print(f"✅ Final norm processed successfully")
+
+        # Load learned position-embedding weights (GPT-Neo style, rank 0 only)
+        if position_embedding is not None:
+            pos_key = arch_info.position_embedding_key
+            print(f"Loading position embedding weights ({pos_key})...")
+            if pos_key in key_to_shard:
+                pos_tensor = get_tensor(pos_key)
+                if pos_tensor is not None:
+                    position_embedding.to_empty(device=self.device)
+                    position_embedding.load_state_dict({"weight": pos_tensor}, assign=True)
+                    del pos_tensor
+                    gc.collect()
+            else:
+                print(f"⚠️  Position embedding {pos_key} not found — zero-initializing "
+                      f"(model will have no positional signal)")
+                position_embedding.to_empty(device=self.device)
+                with torch.no_grad():
+                    position_embedding.weight.zero_()
+
+            position_embedding.to(self.device)
+            for param in position_embedding.parameters():
+                param.requires_grad_(False)
+            print(f"✅ Position embedding processed successfully")
+
         # Close all open shard handles and free the shard index
         for h in shard_handles.values():
             del h
@@ -333,7 +411,7 @@ class PipelineStage:
         else:
             self.rotary_emb = None
         
-        return layers, embedding_layer, lm_head
+        return layers, embedding_layer, lm_head, final_norm, position_embedding
 
     def forward_step_local(self, micro_batch_id: int, batch: Dict[str, torch.Tensor]):
         assert isinstance(micro_batch_id, int)
@@ -352,8 +430,19 @@ class PipelineStage:
         input_ids = batch['input_ids'].to(self.device)
 
         labels = input_ids.clone()
-                
-        hidden_states = self.embedding_layer(input_ids).detach()
+
+        # Reference embedding composition: hidden = wte(ids) + wpe(pos).
+        # position_embedding is None for RoPE architectures, which apply position
+        # inside each block instead.
+        hidden_states = self.embedding_layer(input_ids)
+        if self.position_embedding is not None:
+            seq_len = input_ids.size(1)
+            position_ids = torch.arange(
+                seq_len, dtype=torch.long, device=self.device
+            ).unsqueeze(0).expand(input_ids.size(0), -1)
+            hidden_states = hidden_states + self.position_embedding(position_ids)
+
+        hidden_states = hidden_states.detach()
         hidden_states.requires_grad_(True)
         
         with self.cache_lock:
@@ -415,7 +504,11 @@ class PipelineStage:
             with self.cache_lock:
                 labels = self.forward_cache[micro_batch_id]['labels']
 
-            logits = self.lm_head(output_tensor)
+            # Final normalization before the unembedding, as in the reference
+            # forward. Gradients still flow back to output_tensor through it.
+            normed_states = (self.final_norm(output_tensor)
+                             if self.final_norm is not None else output_tensor)
+            logits = self.lm_head(normed_states)
 
             # Causal LM label shifting: predict token[i+1] from token[i].
             # logits[:, :-1] aligns with labels[:, 1:] (next-token targets).
@@ -542,7 +635,11 @@ class PipelineStage:
 
             labels = labels.to(self.device)
 
-            logits = self.lm_head(output_tensor)
+            # Final normalization before the unembedding, as in the reference
+            # forward. Gradients still flow back to output_tensor through it.
+            normed_states = (self.final_norm(output_tensor)
+                             if self.final_norm is not None else output_tensor)
+            logits = self.lm_head(normed_states)
 
             # Causal LM label shifting: predict token[i+1] from token[i].
             shift_logits = logits[:, :-1, :].contiguous().float()

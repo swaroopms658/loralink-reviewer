@@ -8,8 +8,16 @@ inside **Google Colab Free Tier** (T4 GPU, ~1 h/session; the user runs several
 sessions in parallel across Gmail accounts). Every reported number is tagged
 `[ours]` (we ran it) or `[published, <ref>]` (transcribed from a paper). We do
 **not** re-run competitor methods and we do **not** tune LoraLink to flatter
-results — the patch is additive flags, a lossless-only compression toggle, extra
-partitioners, metric logging, and an eval script.
+results — the harness patch is additive flags, a lossless-only compression
+toggle, extra partitioners, metric logging, and an eval script.
+
+> **One behaviour change was necessary.** The pipeline's forward pass was missing
+> the final normalization layer (and, for GPT-Neo, the learned position
+> embedding), which inflated cross-entropy into the thousands and prevented
+> convergence entirely. That is a correctness fix, not tuning, and it is
+> documented in full — with the measurements that found it — in
+> [`patch/README.md`](patch/README.md). It changes results relative to the
+> paper's published figures; see that file's "Bearing on the paper" note.
 
 ## Run order
 
@@ -137,8 +145,10 @@ jupyter nbconvert --to notebook --execute \
 
 ## Provenance
 
-- Source integrity: `patch/SHA256SUMS` records the checksum of every patched
-  source file. Notebook cell 1 runs `patch/checksums.py --verify` (bare, no
+- Source integrity: `patch/SHA256SUMS` records the checksum of all seven source
+  files that determine results — the five carrying additive instrumentation plus
+  `pipeline_engine.py` / `model_registry.py`, which carry the forward-pass
+  correctness fix. Notebook cell 1 runs `patch/checksums.py --verify` (bare, no
   `--update`) — it checks the cloned tree against the committed `SHA256SUMS` and
   aborts the run on any mismatch.
 - Dependency pins: `requirements-colab.txt` installs **only what Colab Free

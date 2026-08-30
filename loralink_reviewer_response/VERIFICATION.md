@@ -257,6 +257,35 @@ A lossless single-worker run being no better than a compressed two-worker run is
 what ruled out both compression and the pipeline hop, and pointed at the model
 reconstruction itself.
 
+### Closing check — reference forward vs the pipeline
+
+The check that should have existed from the start: run
+`AutoModelForCausalLM` over the same batches from the same `get_data_loader`
+call and compare. On 30 wikitext batches, gpt-neo-125M, frozen:
+
+```
+HF AutoModelForCausalLM reference        4.510
+```
+
+Same batches through the fixed pipeline (mean over 30 training batches, so LoRA
+is adapting and a small improvement on the frozen reference is expected):
+
+```
+1 worker,  lossless    4.331   (-0.179 vs reference)
+2 workers, lossless    4.329   (-0.181)
+2 workers, compressed  4.367   (-0.143)
+```
+
+The pipeline now reproduces the reference. Two results follow, and both are
+meaningful only because of that:
+
+- **the pipeline hop is free** — 1 worker 4.331 vs 2 workers 4.329 (-0.002);
+- **lossy compression costs +0.038 nats (+0.9 %)** — 4.329 → 4.367.
+
+Before the fixes all three arms sat at 7.3–7.6 regardless of configuration,
+because attention was disabled in every one of them: the ablation was measuring
+nothing at all.
+
 Offline suite after all three fixes: **105 passed, 2 deselected** (was 76 + 2).
 New: `tests/test_final_norm.py`, `tests/test_loss_masking.py`,
 `tests/test_nonpersistent_buffers.py`.

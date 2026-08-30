@@ -57,9 +57,12 @@ def test_02_uses_phi_and_others_125m():
 
 def test_02_eval_uses_limit_not_holdout():
     _, src = _src("02_task_quality")
-    assert "evaluate_adapter(" in src
+    # Eval runs in a child process so the kernel does not hold a 1.3B model
+    # while the next arm spawns three more model-loading processes.
+    assert "evaluate_adapter_subprocess(" in src
     assert "limit=200" in src
-    eval_line = next(ln for ln in src.splitlines() if "evaluate_adapter(" in ln)
+    eval_line = next(ln for ln in src.splitlines()
+                     if "evaluate_adapter_subprocess(" in ln)
     assert "eval_holdout" not in eval_line          # removed from evaluate_adapter
     assert "eval_holdout=200" in src                # still passed to run_cluster
 

@@ -9,10 +9,14 @@ datasets are installed (the offline test relies on that).
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import math
 import gc
+import os
 import pathlib
+import subprocess
+import sys
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -31,11 +35,11 @@ def _release_model(model) -> None:
     it the allocator keeps them and the next arm starts short. Safe on CPU-only
     machines and with `model=None`.
     """
+    # Deliberately NOT model.to("cpu") first: that would copy several GB of
+    # weights into host RAM, which on a 12.7 GB Colab host is the thing that
+    # gets the kernel OOM-killed. Dropping the reference frees the GPU tensors;
+    # empty_cache() returns torch's cached blocks to the driver.
     if model is not None:
-        try:
-            model.to("cpu")
-        except Exception:
-            pass
         del model
     gc.collect()
     try:
@@ -147,3 +151,63 @@ def evaluate_adapter(base_model, adapter_dir, dataset, *, max_new_tokens=48,
             w.writeheader()
         w.writerow(row)
     return row
+
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def evaluate_adapter_subprocess(base_model, adapter_dir, dataset, *, arm="", seed=0,
+                                limit=100, max_new_tokens=48,
+                                out_csv="results_quality.csv", timeout_s=1800):
+    """Run `evaluate_adapter` in a child process, then let the OS reclaim it.
+
+    NB02 evaluates between training arms, and the next arm immediately spawns a
+    coordinator plus two workers that each load part of a 1.3 B model. Even with
+    `_release_model`, the parent keeps allocator arenas, CUDA context and library
+    state; a child process returns every byte -- host and device -- when it
+    exits. On a 12.7 GB Colab host with a 14.5 GB T4 that is the difference
+    between the next arm starting and the kernel being OOM-killed.
+    """
+    cmd = [sys.executable, "-m", "loralink_reviewer_response.eval_quality",
+           "--base-model", str(base_model), "--dataset", str(dataset),
+           "--arm", str(arm), "--seed", str(seed), "--limit", str(limit),
+           "--max-new-tokens", str(max_new_tokens), "--out-csv", str(out_csv)]
+    if adapter_dir:
+        cmd += ["--adapter-dir", str(adapter_dir)]
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True,
+                            timeout=timeout_s)
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"eval subprocess failed for arm {arm!r} (exit {result.returncode}):\n"
+            f"{(result.stderr or '(no stderr)')[-2000:]}")
+    return result.returncode
+
+
+def _cli(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Held-out perplexity + BLEU/ROUGE-L for a LoRA adapter.")
+    parser.add_argument("--base-model", required=True)
+    parser.add_argument("--adapter-dir", default="")
+    parser.add_argument("--dataset", required=True)
+    parser.add_argument("--arm", default="")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--limit", type=int, default=100)
+    parser.add_argument("--max-new-tokens", type=int, default=48)
+    parser.add_argument("--out-csv", default="results_quality.csv")
+    args = parser.parse_args(argv)
+
+    row = evaluate_adapter(args.base_model, args.adapter_dir or None, args.dataset,
+                           max_new_tokens=args.max_new_tokens, limit=args.limit,
+                           arm=args.arm, seed=args.seed, out_csv=args.out_csv)
+    print(f"[eval_quality] {row}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())

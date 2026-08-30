@@ -61,8 +61,11 @@ print(f"done {{DONE}}/{{PLANNED}}")
 
     "02_task_quality": ("microsoft/phi-1_5", "e2e:0", f'''\
 # --- Cell 4/5: body -- compression ON/OFF vs a 1-worker LoraLink control ----
+# Evaluation runs in a CHILD PROCESS: the next arm spawns a coordinator plus two
+# workers that each load part of a 1.3B model, and a base model left resident in
+# this kernel gets it OOM-killed on a 12.7GB Colab host.
 {_IMPORT}
-from loralink_reviewer_response.eval_quality import evaluate_adapter
+from loralink_reviewer_response.eval_quality import evaluate_adapter_subprocess
 
 PER_RUN_ESTIMATE = 420
 parts = SHARD.split(":")
@@ -79,11 +82,16 @@ for arm in ARMS:
         print("budget exhausted, stopping"); break
     nw = 1 if arm == "reference" else 2
     adir = f"adapters/{{ds}}_s{{seed}}_{{arm}}"
-    run_cluster(nw, ds, seed, model=MODEL, num_samples=50, epochs=1,
-                compression=(arm != "OFF"), eval_holdout=200, strategy="smart",
-                tag=f"q-{{ds}}-s{{seed}}-{{arm}}", results_csv=sys_csv,
-                save_adapters_to=adir)
-    evaluate_adapter(MODEL, adir, ds, arm=arm, seed=seed, limit=200, out_csv=q_csv)
+    try:
+        run_cluster(nw, ds, seed, model=MODEL, num_samples=50, epochs=1,
+                    compression=(arm != "OFF"), eval_holdout=200, strategy="smart",
+                    tag=f"q-{{ds}}-s{{seed}}-{{arm}}", results_csv=sys_csv,
+                    save_adapters_to=adir)
+        evaluate_adapter_subprocess(MODEL, adir, ds, arm=arm, seed=seed,
+                                    limit=200, out_csv=q_csv)
+    except Exception as e:  # keep the arms that did finish
+        print(f"  arm {{arm}} failed: {{e}}")
+        DONE += 1; continue
     DONE += 1
 print(f"done {{DONE}}/{{PLANNED}}")
 '''),

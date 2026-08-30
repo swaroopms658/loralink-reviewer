@@ -63,6 +63,84 @@ def test_evaluate_adapter_releases_even_on_failure(monkeypatch, tmp_path):
     assert released, "release must run even when evaluation raises"
 
 
+def test_release_does_not_copy_the_model_to_host_ram():
+    """`.to("cpu")` would move ~5.6 GB into a 12.7 GB host at the worst moment."""
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(eval_quality._release_model)))
+    moves = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute) and node.func.attr == "to"
+        and any(isinstance(a, ast.Constant) and a.value == "cpu" for a in node.args)
+    ]
+    assert not moves, "release must not stage the model through host RAM"
+
+
+def test_eval_cli_exposes_the_expected_flags():
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, "-m", "loralink_reviewer_response.eval_quality", "--help"],
+        capture_output=True, text=True).stdout
+    for flag in ["--base-model", "--adapter-dir", "--dataset", "--arm",
+                 "--seed", "--limit", "--out-csv"]:
+        assert flag in out, flag
+
+
+def test_subprocess_helper_builds_a_module_invocation(monkeypatch):
+    seen = {}
+
+    class _R:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        seen["kw"] = kw
+        return _R()
+
+    monkeypatch.setattr(eval_quality.subprocess, "run", _fake_run)
+    eval_quality.evaluate_adapter_subprocess(
+        "microsoft/phi-1_5", "adapters/x", "e2e", arm="ON", seed=2,
+        limit=200, out_csv="q.csv")
+
+    cmd = seen["cmd"]
+    assert "-m" in cmd and "loralink_reviewer_response.eval_quality" in cmd
+    assert "--adapter-dir" in cmd and "adapters/x" in cmd
+    assert cmd[cmd.index("--arm") + 1] == "ON"
+    assert cmd[cmd.index("--seed") + 1] == "2"
+    assert seen["kw"].get("timeout")
+
+
+def test_subprocess_helper_omits_adapter_dir_when_absent(monkeypatch):
+    class _R:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    seen = {}
+    monkeypatch.setattr(eval_quality.subprocess, "run",
+                        lambda cmd, **kw: (seen.update(cmd=cmd), _R())[1])
+    eval_quality.evaluate_adapter_subprocess("m", None, "wikitext")
+    assert "--adapter-dir" not in seen["cmd"], "base-only eval takes no adapter"
+
+
+def test_subprocess_helper_raises_with_child_output(monkeypatch):
+    class _R:
+        returncode = 1
+        stdout = "some stdout"
+        stderr = "CUDA out of memory"
+
+    monkeypatch.setattr(eval_quality.subprocess, "run", lambda cmd, **kw: _R())
+    with pytest.raises(RuntimeError, match="out of memory"):
+        eval_quality.evaluate_adapter_subprocess("m", None, "e2e")
+
+
 def test_worker_log_paths_are_per_worker():
     paths = cluster_launch._worker_log_paths(tmp := __import__("pathlib").Path("/tmp/x.csv"), 3)
     assert len(paths) == 3

@@ -70,6 +70,48 @@ Note this affects the **training loss curve only**. `eval_quality._perplexity`
 scores one unpadded text at a time, so the reported perplexity, BLEU and ROUGE-L
 were never contaminated by padding.
 
+### 2c. Non-persistent buffers destroyed by `to_empty()`
+
+Same file, same category, and the one that actually dominated the loss.
+
+Blocks are built on the meta device, materialized with `to_empty()`, then filled
+by `load_state_dict(..., strict=False, assign=True)`. That restores *parameters*.
+It does not restore buffers registered `persistent=False`, because those never
+appear in a checkpoint — so they keep whatever `to_empty()` left in memory.
+
+GPT-Neo's causal mask, `attn.attention.bias`, is exactly such a buffer, and it is
+applied unconditionally inside `_attn`:
+
+```python
+attn_weights = torch.where(causal_mask, attn_weights, mask_value)
+```
+
+Measured after materialization: **0 of 1024 cells unmasked** — every attention
+weight replaced by the mask value. Attention contributed nothing, leaving the
+model to predict from token statistics alone, which pins cross-entropy near the
+unigram entropy of English (~7.5 nats). That matches the measurement precisely,
+and explains why it did not move with compression:
+
+```
+1 worker,  lossless   mean loss 7.604
+2 workers, lossless   mean loss 7.321
+2 workers, compressed mean loss 7.533
+```
+
+Attention was dead in all three arms, so the ablation was measuring nothing.
+
+Fixed by `build_reference_block()` + `restore_nonpersistent_buffers()`: after
+each layer loads, a reference block is constructed and its non-persistent buffers
+copied in. The reference is built **per layer** — GPT-Neo alternates global and
+local attention and the two masks differ — and via
+`accelerate.init_empty_weights(include_buffers=False)` so its parameters stay on
+meta and only buffers cost memory (a fully materialized reference would add
+~216 MB per layer for Phi-1.5). Both the builder and the copier refuse a
+meta-device buffer rather than copy it, so a change in accelerate's behaviour
+fails loudly instead of silently restoring the corruption.
+
+Regression guard: `tests/test_nonpersistent_buffers.py`.
+
 ### Implementation
 
 The final-norm fix adds `final_norm_prefix`, `final_norm_class_name` and
@@ -79,7 +121,20 @@ factory, loading for both modules, and their application in
 parts (`requires_grad_(False)`) and are not LoRA targets — `apply_lora_to_layers`
 only ever sees `self.layers` — so the optimizer and LoRA math are untouched.
 
-Regression guards: `tests/test_final_norm.py`, `tests/test_loss_masking.py`.
+Regression guards: `tests/test_final_norm.py`, `tests/test_loss_masking.py`,
+`tests/test_nonpersistent_buffers.py`.
+
+### Why three defects, not one
+
+All three share a root: the pipeline reconstructs the model by hand — meta-device
+shells, `to_empty()`, and a partial `state_dict` load — instead of going through
+HuggingFace's loader. That approach is silent by construction. Anything the
+checkpoint does not contain (a module the code forgot to create, a
+non-persistent buffer) ends up either absent or uninitialized, with no error
+raised. The model still runs and still produces a loss; it is simply the wrong
+loss. A future change to the reconstruction path should be treated as
+high-risk and validated against a reference `AutoModelForCausalLM` forward on
+identical inputs, which is the check that would have caught all three at once.
 
 ### Bearing on the paper
 

@@ -21,6 +21,78 @@ from model_registry import ModelRegistry, ModelArchitecture, ArchitectureInfo
 IGNORE_INDEX = -100
 
 
+def build_reference_block(block_class, model_config, architecture, layer_idx) -> nn.Module:
+    """A block whose buffers are real but whose parameters cost nothing.
+
+    Only the buffers are wanted (see `restore_nonpersistent_buffers`), so
+    `init_empty_weights(include_buffers=False)` keeps parameters on the meta device
+    while `__init__` still computes buffers for real. That matters for Phi-1.5,
+    where a fully materialized reference block would cost ~216 MB per layer on an
+    already-tight T4. Falls back to a plain CPU build if accelerate is unavailable.
+    """
+    def _make():
+        if architecture == ModelArchitecture.GPT_NEO:
+            return block_class(model_config, layer_id=layer_idx)
+        return block_class(model_config, layer_idx=layer_idx)
+
+    def _buffers_are_real(module):
+        return all(b.device.type != "meta" for _, b in module.named_buffers())
+
+    try:
+        from accelerate import init_empty_weights
+        with init_empty_weights(include_buffers=False):
+            candidate = _make()
+        # Only usable if the buffers really were materialized; a meta buffer here
+        # would be copied straight back into the shell and silently reintroduce
+        # the corruption this whole function exists to prevent.
+        if _buffers_are_real(candidate):
+            return candidate
+        del candidate
+    except Exception:
+        pass
+
+    with torch.device('cpu'):
+        return _make()
+
+
+def restore_nonpersistent_buffers(shell: nn.Module, reference: nn.Module,
+                                  device: Optional[torch.device] = None) -> int:
+    """Copy buffers that `state_dict()` omits from `reference` into `shell`.
+
+    Blocks are built on the meta device and materialized with `to_empty()`, which
+    allocates *uninitialized* storage for every buffer. Parameters are then
+    restored by `load_state_dict`, but buffers registered `persistent=False` are
+    absent from the checkpoint and so stay uninitialized. GPT-Neo's causal mask
+    (`attn.attention.bias`) is one of these: left corrupt, attention masks the
+    wrong positions and the block silently returns garbage.
+
+    Returns the number of buffers restored.
+    """
+    persistent = set(shell.state_dict().keys())
+    ref_buffers = dict(reference.named_buffers())
+    restored = 0
+
+    for name, buf in list(shell.named_buffers()):
+        if name in persistent:
+            continue  # already restored by load_state_dict
+        source = ref_buffers.get(name)
+        if source is None:
+            continue
+        if source.device.type == "meta":
+            raise RuntimeError(
+                f"reference buffer {name!r} is on the meta device and carries no "
+                f"values; copying it would leave {name!r} corrupt")
+        parent = shell
+        *path, leaf = name.split(".")
+        for part in path:
+            parent = getattr(parent, part)
+        setattr(parent, leaf,
+                source.detach().clone().to(device if device is not None else buf.device))
+        restored += 1
+
+    return restored
+
+
 def build_masked_labels(input_ids: torch.Tensor,
                         attention_mask: Optional[torch.Tensor]) -> torch.Tensor:
     """Next-token labels with padded positions set to IGNORE_INDEX.
@@ -268,11 +340,23 @@ class PipelineStage:
                 # This ensures we have real storage allocated.
                 layers[i].to_empty(device=self.device)
                 layers[i].load_state_dict(layer_state_dict, strict=False, assign=True)
-                
+
                 # Move to device (redundant if already on device, but needed if loaded from CPU tensor)
                 layers[i].to(self.device)
 
-                
+                # to_empty() left every buffer uninitialized and the checkpoint has
+                # no entry for the non-persistent ones (GPT-Neo's causal mask among
+                # them), so rebuild a reference block and copy them across. The
+                # reference is per-layer: GPT-Neo alternates global/local attention
+                # and the two masks differ.
+                reference_block = build_reference_block(
+                    block_class, model_config, architecture, layer_idx)
+                n_restored = restore_nonpersistent_buffers(
+                    layers[i], reference_block, device=self.device)
+                if n_restored:
+                    print(f"   Restored {n_restored} non-persistent buffer(s) for layer {layer_idx}")
+                del reference_block
+
                 # Free temporary state dict and collect garbage between layers
                 del layer_state_dict
                 gc.collect()

@@ -225,6 +225,7 @@ surfaced that no offline test could have caught; all four are fixed.
 | 3 | `HfUriError: Repository id must be 'namespace/name'` | newer `huggingface_hub` rejects the bare `wikitext` id | `Salesforce/wikitext` |
 | 4 | **loss 2 000–11 000, no convergence** | forward pass omitted the final norm and GPT-Neo's `wpe` | see `patch/README.md` §2 |
 | 5 | after fixing 4: loss fell 10.29 → **0.22** in 60 steps | `cross_entropy` scored the padding `data_loader` adds to 256 tokens; model learned "emit padding" | `build_masked_labels` + `ignore_index=-100`, `patch/README.md` §2b |
+| 6 | after fixing 5: loss stuck at **~7.4**, flat, identical with compression on/off | `to_empty()` left GPT-Neo's causal-mask buffer uninitialized (non-persistent ⇒ absent from the checkpoint); it materialized all-`False`, so attention masked everything and the model predicted from token statistics alone | `build_reference_block` + `restore_nonpersistent_buffers`, `patch/README.md` §2c |
 
 Defect 4 is the significant one. Evidence that isolated it, both arms 25 batches
 on gpt-neo-125M:
@@ -239,13 +240,26 @@ model at 5 479 (correct ≈ 4–6, uniform-random ≈ ln 50257 ≈ 10.8) ⇒ log
 inflated ~500×, i.e. a missing normalization, confirmed against
 `transformers.models.gpt_neo.modeling_gpt_neo.GPTNeoModel.forward`.
 
-Two 5-seed NB01 shards were run during this investigation — one before any fix
-(loss ~5 300) and one after the norm fix but before the padding fix (loss 10.29 →
-0.22). **Both are discarded.** All result CSVs must be regenerated on the fixed
-code.
+Three 5-seed NB01 shards were run during this investigation — before any fix
+(loss ~5 300), after the norm fix (10.29 → 0.22, scoring padding), and after the
+padding fix (~7.4, flat, attention dead). **All three are discarded.** Every
+result CSV must be regenerated on the fixed code.
 
-Offline suite after both fixes: **96 passed, 2 deselected** (was 76 + 2; the 20
-new tests are `tests/test_final_norm.py` and `tests/test_loss_masking.py`).
+The control that isolated defect 6 — three arms, 30 batches each:
+
+```
+1 worker,  lossless    mean 7.604   first 8.779
+2 workers, lossless    mean 7.321   first 7.703
+2 workers, compressed  mean 7.533   first 7.911
+```
+
+A lossless single-worker run being no better than a compressed two-worker run is
+what ruled out both compression and the pipeline hop, and pointed at the model
+reconstruction itself.
+
+Offline suite after all three fixes: **105 passed, 2 deselected** (was 76 + 2).
+New: `tests/test_final_norm.py`, `tests/test_loss_masking.py`,
+`tests/test_nonpersistent_buffers.py`.
 
 ---
 

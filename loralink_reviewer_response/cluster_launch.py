@@ -45,6 +45,37 @@ def _clear_netem():
 _MAIN = str(REPO_ROOT / "main.py")  # absolute: children run with cwd=workdir
 
 
+def _worker_log_paths(csv_path, n_workers):
+    """One log file per worker, beside the run's metrics CSV."""
+    csv_path = pathlib.Path(csv_path)
+    return [csv_path.with_name(f"{csv_path.name}.worker{i}.log")
+            for i in range(n_workers)]
+
+
+def _worker_log_tail(paths, limit=20):
+    """Last `limit` lines of each worker log, for attaching to a failure.
+
+    A worker that dies mid-run leaves the coordinator waiting on a gradient that
+    never arrives; without this the only symptom is a bare timeout.
+    """
+    chunks = []
+    for path in paths:
+        path = pathlib.Path(path)
+        try:
+            lines = [ln.rstrip() for ln in
+                     path.read_text(encoding="utf-8", errors="replace").splitlines()
+                     if ln.strip()]
+        except FileNotFoundError:
+            chunks.append(f"--- {path.name}: (no log file) ---")
+            continue
+        except Exception as exc:
+            chunks.append(f"--- {path.name}: (unreadable: {exc}) ---")
+            continue
+        body = "\n".join(lines[-limit:]) if lines else "(empty)"
+        chunks.append(f"--- {path.name} ---\n{body}")
+    return "\n".join(chunks)
+
+
 def _worker_cmd(ip, model, seed):
     return [sys.executable, _MAIN, "--role", "worker",
             "--host-ip", ip, "--base-model", model, "--seed", str(seed)]
@@ -79,6 +110,8 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
     netem_mode = "none"
     procs = []
     errf = None
+    worker_logs = []
+    worker_log_handles = []
     try:
         if netem:
             if _tc_available():
@@ -89,9 +122,13 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
                 env["LORALINK_NET_SHIM"] = f'{netem.get("delay_ms", 0)},{netem.get("loss_pct", 0)}'
         csv_path.with_name(csv_path.name + ".netem").write_text(netem_mode)
 
-        for ip in worker_ips:
+        worker_logs = _worker_log_paths(csv_path, len(worker_ips))
+        for ip, log_path in zip(worker_ips, worker_logs):
+            handle = open(log_path, "w", encoding="utf-8")
+            worker_log_handles.append(handle)
             procs.append(subprocess.Popen(
-                _worker_cmd(ip, model, seed), cwd=workdir, env=env))
+                _worker_cmd(ip, model, seed), cwd=workdir, env=env,
+                stdout=handle, stderr=subprocess.STDOUT))
         for ip in worker_ips:
             _wait_port(ip, PORT)
 
@@ -103,10 +140,18 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
                        csv_path=csv_path),
             cwd=workdir, env=env, stdout=errf, stderr=subprocess.STDOUT)
         procs.append(coord)
+        def _flush_worker_logs():
+            for handle in worker_log_handles:
+                with contextlib.suppress(Exception):
+                    handle.flush()
+
         try:
             coord.wait(timeout=run_timeout_s)
         except subprocess.TimeoutExpired:
-            raise TimeoutError(f"run '{tag}' exceeded {run_timeout_s}s")
+            _flush_worker_logs()
+            raise TimeoutError(
+                f"run '{tag}' exceeded {run_timeout_s}s\n"
+                f"{_worker_log_tail(worker_logs)}")
         if coord.returncode != 0:
             _err = ""
             with contextlib.suppress(Exception):
@@ -119,8 +164,12 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
             _sig = [ln for ln in _lines
                     if not ln.lstrip().startswith(("INFO:", "WARNING:", "DEBUG:"))]
             _tail = "\n".join((_sig or _lines)[-25:]) or "(no stderr)"
+            # A coordinator timing out on a gradient is usually a worker that died;
+            # its log is the only place the reason appears.
+            _flush_worker_logs()
             raise RuntimeError(
                 f"coordinator exited {coord.returncode} for run '{tag}':\n{_tail}\n"
+                f"\nWORKER LOGS:\n{_worker_log_tail(worker_logs)}\n"
                 f"(full stderr: {csv_path.name}.coord.err)")
 
         if save_adapters_to:
@@ -139,6 +188,9 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
         for p in procs:  # reap so no zombies and ports 29500 are released before return
             with contextlib.suppress(Exception):
                 p.wait(timeout=5)
+        for handle in worker_log_handles:  # after the children are reaped
+            with contextlib.suppress(Exception):
+                handle.close()
         if netem_mode == "tc-netem":
             _clear_netem()
         if errf is not None:

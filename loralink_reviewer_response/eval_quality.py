@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import math
+import gc
 import pathlib
 
 import torch
@@ -19,6 +20,29 @@ from datasets import load_dataset
 
 _COLS = ["arm", "seed", "dataset", "base_model", "perplexity", "bleu",
          "rougeL", "n_eval", "adapter_dir", "slice_bounds"]
+
+
+def _release_model(model) -> None:
+    """Drop a model and hand its VRAM back to the driver.
+
+    NB02 evaluates between training arms in the notebook process, so a base model
+    left resident here is memory the next arm's coordinator and workers cannot
+    have. `empty_cache()` is what actually returns torch's cached blocks; without
+    it the allocator keeps them and the next arm starts short. Safe on CPU-only
+    machines and with `model=None`.
+    """
+    if model is not None:
+        try:
+            model.to("cpu")
+        except Exception:
+            pass
+        del model
+    gc.collect()
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
 
 
 def _load(base_model, adapter_dir):
@@ -84,23 +108,30 @@ def _gen_bleu_rouge(model, tok, mrs, refs, max_new_tokens):
 def evaluate_adapter(base_model, adapter_dir, dataset, *, max_new_tokens=48,
                      limit=100, arm="", seed=0, out_csv="results_quality.csv"):
     model, tok = _load(base_model, adapter_dir)
-    if dataset == "wikitext":
-        ds = load_dataset("wikitext", "wikitext-2-raw-v1", split="test",
-                          cache_dir="./dataset")
-        texts = [x for x in ds["text"] if x.strip()][:limit]
-        ppl = _perplexity(model, tok, texts)
-        bleu = rougeL = ""
-        n_eval = len(texts)
-        bounds = f"test[0:{len(texts)}]"
-    else:  # e2e (anything not "wikitext")
-        ds = _load_e2e(limit)
-        mrs = ds["meaning_representation"]
-        refs = ds["target"]
-        texts = [f"Data: {m}\nText: {t}" for m, t in zip(mrs, refs)]
-        ppl = _perplexity(model, tok, texts)
-        bleu, rougeL = _gen_bleu_rouge(model, tok, mrs, refs, max_new_tokens)
-        n_eval = len(ds)
-        bounds = f"validation[0:{len(ds)}]"
+    try:
+        if dataset == "wikitext":
+            ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1",
+                              split="test", cache_dir="./dataset")
+            texts = [x for x in ds["text"] if x.strip()][:limit]
+            ppl = _perplexity(model, tok, texts)
+            bleu = rougeL = ""
+            n_eval = len(texts)
+            bounds = f"test[0:{len(texts)}]"
+        else:  # e2e (anything not "wikitext")
+            ds = _load_e2e(limit)
+            mrs = ds["meaning_representation"]
+            refs = ds["target"]
+            texts = [f"Data: {m}\nText: {t}" for m, t in zip(mrs, refs)]
+            ppl = _perplexity(model, tok, texts)
+            bleu, rougeL = _gen_bleu_rouge(model, tok, mrs, refs, max_new_tokens)
+            n_eval = len(ds)
+            bounds = f"validation[0:{len(ds)}]"
+    finally:
+        # Always hand the VRAM back: NB02 starts another 3-process training arm
+        # immediately after this returns, and on a 14.5 GB T4 a retained fp32
+        # Phi-1.5 (~5.3 GB) is the difference between fitting and not.
+        _release_model(model)
+        model = None
 
     row = {"arm": arm, "seed": seed, "dataset": dataset,
            "base_model": base_model, "perplexity": round(ppl, 4),

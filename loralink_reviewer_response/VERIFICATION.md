@@ -226,6 +226,9 @@ surfaced that no offline test could have caught; all four are fixed.
 | 4 | **loss 2 000–11 000, no convergence** | forward pass omitted the final norm and GPT-Neo's `wpe` | see `patch/README.md` §2 |
 | 5 | after fixing 4: loss fell 10.29 → **0.22** in 60 steps | `cross_entropy` scored the padding `data_loader` adds to 256 tokens; model learned "emit padding" | `build_masked_labels` + `ignore_index=-100`, `patch/README.md` §2b |
 | 6 | after fixing 5: loss stuck at **~7.4**, flat, identical with compression on/off | `to_empty()` left GPT-Neo's causal-mask buffer uninitialized (non-persistent ⇒ absent from the checkpoint); it materialized all-`False`, so attention masked everything and the model predicted from token statistics alone | `build_reference_block` + `restore_nonpersistent_buffers`, `patch/README.md` §2c |
+| 7 | cross-seed std 0.0016 — seeds varied almost nothing | loader used `shuffle=False`, so every seed saw identical data in identical order; only LoRA's `A` init differed | seeded training shuffle, `patch/README.md` §1b |
+| 8 | NB02 arm 2 died at batch 1 after arm 1 succeeded | `evaluate_adapter` loaded a full fp32 Phi-1.5 (~5.3 GB) on the GPU in the notebook process between arms and never released it | `_release_model()` in a `finally` |
+| 9 | that failure surfaced only as a bare 300 s gradient timeout | worker stdout/stderr was inherited and lost, so a worker dying mid-run left no evidence | per-worker log files; tails attached to the raised error |
 
 Defect 4 is the significant one. Evidence that isolated it, both arms 25 batches
 on gpt-neo-125M:

@@ -12,4 +12,10 @@ sources; this zip is the loralink_reviewer_response/ package only.
 3. Put all downloaded CSVs in one folder, open notebooks/99_aggregate_report.ipynb,
    upload them -> tables, plots, RESPONSE_ABHAY_NIKHIL.filled.md.
 
+IF THE PACKAGE IS UPDATED MID-CAMPAIGN: re-open the notebook from GitHub. Cell 1
+re-clones the repo, so it picks up new .py source, but it does NOT change the
+notebook you already have open in Colab -- that JSON is whatever you opened. A
+stale notebook running fresh source is hard to spot and has caused a real
+failure (an in-process eval holding 5.45 GB while the next arm OOM'd).
+
 Full details: README.md

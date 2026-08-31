@@ -153,6 +153,22 @@ def test_child_processes_run_unbuffered():
     assert wcmd.index("-u") < wcmd.index("--role"), "-u must precede the script"
 
 
+def test_child_env_sets_expandable_segments(monkeypatch, tmp_path):
+    """Three processes on one T4 must not strand memory in per-process fragments."""
+    seen = {}
+
+    def _boom(*a, **kw):
+        seen["env"] = kw.get("env", {})
+        raise KeyboardInterrupt        # stop before anything is spawned
+
+    monkeypatch.setattr(cluster_launch.subprocess, "Popen", _boom)
+    with pytest.raises(KeyboardInterrupt):
+        cluster_launch.run_cluster(1, "wikitext", 0,
+                                   results_csv=str(tmp_path / "r.csv"))
+    assert seen["env"]["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert seen["env"]["PYTHONUNBUFFERED"] == "1"
+
+
 def test_worker_errors_print_a_traceback():
     """A bare str(e) on a network thread is not enough to diagnose a stall."""
     import inspect

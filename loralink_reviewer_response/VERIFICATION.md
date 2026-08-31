@@ -229,6 +229,14 @@ surfaced that no offline test could have caught; all four are fixed.
 | 7 | cross-seed std 0.0016 — seeds varied almost nothing | loader used `shuffle=False`, so every seed saw identical data in identical order; only LoRA's `A` init differed | seeded training shuffle, `patch/README.md` §1b |
 | 8 | NB02 arm 2 died at batch 1 after arm 1 succeeded | `evaluate_adapter` loaded a full fp32 Phi-1.5 (~5.3 GB) on the GPU in the notebook process between arms and never released it | `_release_model()` in a `finally` |
 | 9 | that failure surfaced only as a bare 300 s gradient timeout | worker stdout/stderr was inherited and lost, so a worker dying mid-run left no evidence | per-worker log files; tails attached to the raised error |
+| 10 | worker logs captured, but still showed no error — only `logging` output | worker `print()` is block-buffered when redirected to a file and is discarded when `run_cluster` SIGTERMs the process; the handler also printed only `str(e)` | `-u` + `PYTHONUNBUFFERED=1` on both children; full tracebacks in `_worker_message_handler` |
+| 11 | `torch.OutOfMemoryError` at `lm_head`, 13.75 MiB free of 14.56 GiB | the **notebook was stale**: cell 1 re-clones the repo but does not update the notebook JSON already open in Colab, so the in-process eval was still running and held 5.45 GiB | re-open the notebook from GitHub after a package update (now stated in `HOW_TO_RUN.txt`); `expandable_segments:True` for headroom |
+
+Defect 11 is worth remembering as an operating hazard rather than a code bug:
+**a stale notebook running fresh repo source** is nearly invisible, because the
+parts that come from the repo behave as expected. The census in torch's OOM
+message is what exposed it — the notebook kernel held a model that the current
+notebook body never loads.
 
 Defect 4 is the significant one. Evidence that isolated it, both arms 25 batches
 on gpt-neo-125M:

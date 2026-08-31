@@ -110,6 +110,10 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
     env["LORALINK_LOSSY_COMPRESSION"] = "1" if compression else "0"
     env.setdefault("LORALINK_FAKE_BENCHMARK", "0")
     env["PYTHONUNBUFFERED"] = "1"  # belt and braces with -u; see _worker_cmd
+    # Three processes share one T4 and each grows its own allocator arena;
+    # expandable segments let them give space back instead of stranding it in
+    # per-process fragments. Recommended by torch's own OOM message.
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
     netem_mode = "none"
     procs = []

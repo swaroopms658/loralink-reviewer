@@ -40,6 +40,23 @@ def test_walltime_guard_in_body(name):
 
 
 @pytest.mark.parametrize("name", NAMES)
+def test_setup_cell_purges_stale_modules(name):
+    """Re-cloning does not reload modules the kernel already imported.
+
+    Cell 1 re-clones the repo, but sys.modules still holds the previously
+    imported cluster_launch / pipeline_engine / etc, so the run would silently
+    execute the old checkout -- which happened twice, and looked like the fix
+    simply not working.
+    """
+    nb, _ = _src(name)
+    setup = nb.cells[0].source
+    assert "del sys.modules" in setup, name
+    for mod in ("cluster_launch", "pipeline_engine"):
+        assert mod in setup, f"{name}: {mod} not purged"
+    assert "log --oneline" in setup, f"{name}: should print the commit in use"
+
+
+@pytest.mark.parametrize("name", NAMES)
 def test_failures_are_not_counted_as_successes(name):
     """The manifest is a provenance record: a crashed run must not read as done.
 

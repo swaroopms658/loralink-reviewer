@@ -12,10 +12,19 @@ sources; this zip is the loralink_reviewer_response/ package only.
 3. Put all downloaded CSVs in one folder, open notebooks/99_aggregate_report.ipynb,
    upload them -> tables, plots, RESPONSE_ABHAY_NIKHIL.filled.md.
 
-IF THE PACKAGE IS UPDATED MID-CAMPAIGN: re-open the notebook from GitHub. Cell 1
-re-clones the repo, so it picks up new .py source, but it does NOT change the
-notebook you already have open in Colab -- that JSON is whatever you opened. A
-stale notebook running fresh source is hard to spot and has caused a real
-failure (an in-process eval holding 5.45 GB while the next arm OOM'd).
+IF THE PACKAGE IS UPDATED MID-CAMPAIGN, two separate things go stale:
+
+  1. THE NOTEBOOK. Cell 1 re-clones the repo but does NOT change the .ipynb you
+     already have open -- that JSON is whatever you opened. Re-open it from
+     GitHub.
+  2. THE IMPORTED MODULES. A kernel that already imported cluster_launch,
+     pipeline_engine etc. keeps the OLD code in sys.modules; re-cloning the
+     files does not reload them. Cell 1 now drops those modules after cloning,
+     so re-running cell 1 is enough -- but you must actually RE-RUN CELL 1, not
+     just cell 4.
+
+Both failures look identical to "the fix didn't work", because everything else
+behaves normally. Cell 1 prints the commit hash in use -- check it matches the
+latest before trusting a run.
 
 Full details: README.md

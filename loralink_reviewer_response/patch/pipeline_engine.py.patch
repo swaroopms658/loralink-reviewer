@@ -1,8 +1,8 @@
 diff --git a/pipeline_engine.py b/pipeline_engine.py
-index 434e2be..47be43d 100644
+index 434e2be..e1ff78f 100644
 --- a/pipeline_engine.py
 +++ b/pipeline_engine.py
-@@ -15,6 +15,96 @@ import gc
+@@ -15,6 +15,120 @@ import gc
  import threading
  from model_registry import ModelRegistry, ModelArchitecture, ArchitectureInfo
  
@@ -84,6 +84,30 @@ index 434e2be..47be43d 100644
 +    return restored
 +
 +
++def target_modules_for(architecture) -> list:
++    """Linear submodules LoRA adapts, per architecture.
++
++    These are matched by suffix against `named_modules()`, and a name that
++    matches nothing is skipped, so a stale name costs adapters silently. Phi is
++    the cautionary case: `Wqkv`/`out_proj` belong to the old *remote-code*
++    `microsoft/phi-1_5`, whereas the transformers implementation used here names
++    them `q_proj`/`k_proj`/`v_proj`/`dense`. Only `fc1`/`fc2` matched, so
++    attention went unadapted and each layer got 2 LoRA pairs instead of 6.
++    Legacy names are kept alongside the current ones so either variant works.
++    """
++    if architecture == ModelArchitecture.GPT_NEO:
++        # attention q/k/v/out + MLP c_fc/c_proj
++        return ["q_proj", "k_proj", "v_proj", "out_proj", "c_fc", "c_proj"]
++    if architecture == ModelArchitecture.PHI:
++        # transformers PhiDecoderLayer: q/k/v + dense, MLP fc1/fc2.
++        # Wqkv/out_proj retained for the older remote-code Phi.
++        return ["q_proj", "k_proj", "v_proj", "dense", "fc1", "fc2",
++                "Wqkv", "out_proj"]
++    # LLaMA / Mistral / Qwen2: attention q/k/v/o + gated MLP
++    return ["q_proj", "k_proj", "v_proj", "o_proj",
++            "gate_proj", "up_proj", "down_proj"]
++
++
 +def build_masked_labels(input_ids: torch.Tensor,
 +                        attention_mask: Optional[torch.Tensor]) -> torch.Tensor:
 +    """Next-token labels with padded positions set to IGNORE_INDEX.
@@ -99,19 +123,33 @@ index 434e2be..47be43d 100644
  class PipelineStage:
      def __init__(self, config: PipelineConfig, network_manager: NetworkManager):
          # 1. SETUP DEVICE DYNAMICALLY (Supports CPU, GPU, or Mixed)
-@@ -35,7 +125,10 @@ class PipelineStage:
+@@ -35,19 +149,12 @@ class PipelineStage:
          )
  
          # 2. LOAD MODEL PARTS
 -        self.layers, self.embedding_layer, self.lm_head = self._load_model_parts()
+-
+-        # Architecture-aware target modules — cover attention AND MLP projections.
+-        if self.architecture == ModelArchitecture.GPT_NEO:
+-            # GPT-Neo: attention q/k/v/out + MLP c_fc/c_proj
+-            target_modules = ["q_proj", "k_proj", "v_proj", "out_proj", "c_fc", "c_proj"]
+-        elif self.architecture == ModelArchitecture.PHI:
+-            # Phi-2: fused QKV + attention out + MLP fc1/fc2
+-            target_modules = ["Wqkv", "out_proj", "fc1", "fc2"]
+-        else:
+-            # LLaMA / Mistral / Qwen2: attention q/k/v/o + gated MLP
+-            target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
+-                              "gate_proj", "up_proj", "down_proj"]
 +        # final_norm / position_embedding are frozen base-model parts, not LoRA
 +        # targets: apply_lora_to_layers below only ever sees self.layers.
 +        (self.layers, self.embedding_layer, self.lm_head,
 +         self.final_norm, self.position_embedding) = self._load_model_parts()
++
++        target_modules = target_modules_for(self.architecture)
  
-         # Architecture-aware target modules — cover attention AND MLP projections.
-         if self.architecture == ModelArchitecture.GPT_NEO:
-@@ -75,7 +168,8 @@ class PipelineStage:
+         # list(self.layers) gives individual block objects so adapter object-identity
+         # matching in get_lora_state_dict works correctly (not the container).
+@@ -75,7 +182,8 @@ class PipelineStage:
                          del self.forward_cache[key]
                  gc.collect()
  
@@ -121,7 +159,7 @@ index 434e2be..47be43d 100644
          # Use model_name from config (passed from device_manager)
          model_path = f"./models/{self.config.model_name}"
          safetensors_path = f"{model_path}/model.safetensors"
-@@ -151,7 +245,25 @@ class PipelineStage:
+@@ -151,7 +259,25 @@ class PipelineStage:
              with torch.device('meta'):
                  lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
  
@@ -148,7 +186,7 @@ index 434e2be..47be43d 100644
          gc.collect()
          
          print(f"Lazy loading weights from {safetensors_path}")
-@@ -228,11 +340,23 @@ class PipelineStage:
+@@ -228,11 +354,23 @@ class PipelineStage:
                  # This ensures we have real storage allocated.
                  layers[i].to_empty(device=self.device)
                  layers[i].load_state_dict(layer_state_dict, strict=False, assign=True)
@@ -174,7 +212,7 @@ index 434e2be..47be43d 100644
                  # Free temporary state dict and collect garbage between layers
                  del layer_state_dict
                  gc.collect()
-@@ -301,7 +425,63 @@ class PipelineStage:
+@@ -301,7 +439,63 @@ class PipelineStage:
                  import traceback
                  traceback.print_exc()
                  raise
@@ -239,7 +277,7 @@ index 434e2be..47be43d 100644
          # Close all open shard handles and free the shard index
          for h in shard_handles.values():
              del h
-@@ -333,7 +513,7 @@ class PipelineStage:
+@@ -333,7 +527,7 @@ class PipelineStage:
          else:
              self.rotary_emb = None
          
@@ -248,7 +286,7 @@ index 434e2be..47be43d 100644
  
      def forward_step_local(self, micro_batch_id: int, batch: Dict[str, torch.Tensor]):
          assert isinstance(micro_batch_id, int)
-@@ -351,9 +531,21 @@ class PipelineStage:
+@@ -351,9 +545,21 @@ class PipelineStage:
          #GPU CHANGE
          input_ids = batch['input_ids'].to(self.device)
  
@@ -273,7 +311,7 @@ index 434e2be..47be43d 100644
          hidden_states.requires_grad_(True)
          
          with self.cache_lock:
-@@ -415,7 +607,11 @@ class PipelineStage:
+@@ -415,7 +621,11 @@ class PipelineStage:
              with self.cache_lock:
                  labels = self.forward_cache[micro_batch_id]['labels']
  
@@ -286,7 +324,7 @@ index 434e2be..47be43d 100644
  
              # Causal LM label shifting: predict token[i+1] from token[i].
              # logits[:, :-1] aligns with labels[:, 1:] (next-token targets).
-@@ -424,6 +620,7 @@ class PipelineStage:
+@@ -424,6 +634,7 @@ class PipelineStage:
              loss = F.cross_entropy(
                  shift_logits.view(-1, shift_logits.size(-1)),
                  shift_labels.view(-1),
@@ -294,7 +332,7 @@ index 434e2be..47be43d 100644
              )
  
              print(f"Loss for micro-batch {micro_batch_id}: {loss.item():.4f}")
-@@ -542,7 +739,11 @@ class PipelineStage:
+@@ -542,7 +753,11 @@ class PipelineStage:
  
              labels = labels.to(self.device)
  
@@ -307,7 +345,7 @@ index 434e2be..47be43d 100644
  
              # Causal LM label shifting: predict token[i+1] from token[i].
              shift_logits = logits[:, :-1, :].contiguous().float()
-@@ -550,6 +751,7 @@ class PipelineStage:
+@@ -550,6 +765,7 @@ class PipelineStage:
              loss = F.cross_entropy(
                  shift_logits.view(-1, shift_logits.size(-1)),
                  shift_labels.view(-1),

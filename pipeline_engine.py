@@ -93,6 +93,30 @@ def restore_nonpersistent_buffers(shell: nn.Module, reference: nn.Module,
     return restored
 
 
+def target_modules_for(architecture) -> list:
+    """Linear submodules LoRA adapts, per architecture.
+
+    These are matched by suffix against `named_modules()`, and a name that
+    matches nothing is skipped, so a stale name costs adapters silently. Phi is
+    the cautionary case: `Wqkv`/`out_proj` belong to the old *remote-code*
+    `microsoft/phi-1_5`, whereas the transformers implementation used here names
+    them `q_proj`/`k_proj`/`v_proj`/`dense`. Only `fc1`/`fc2` matched, so
+    attention went unadapted and each layer got 2 LoRA pairs instead of 6.
+    Legacy names are kept alongside the current ones so either variant works.
+    """
+    if architecture == ModelArchitecture.GPT_NEO:
+        # attention q/k/v/out + MLP c_fc/c_proj
+        return ["q_proj", "k_proj", "v_proj", "out_proj", "c_fc", "c_proj"]
+    if architecture == ModelArchitecture.PHI:
+        # transformers PhiDecoderLayer: q/k/v + dense, MLP fc1/fc2.
+        # Wqkv/out_proj retained for the older remote-code Phi.
+        return ["q_proj", "k_proj", "v_proj", "dense", "fc1", "fc2",
+                "Wqkv", "out_proj"]
+    # LLaMA / Mistral / Qwen2: attention q/k/v/o + gated MLP
+    return ["q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj"]
+
+
 def build_masked_labels(input_ids: torch.Tensor,
                         attention_mask: Optional[torch.Tensor]) -> torch.Tensor:
     """Next-token labels with padded positions set to IGNORE_INDEX.
@@ -130,17 +154,7 @@ class PipelineStage:
         (self.layers, self.embedding_layer, self.lm_head,
          self.final_norm, self.position_embedding) = self._load_model_parts()
 
-        # Architecture-aware target modules — cover attention AND MLP projections.
-        if self.architecture == ModelArchitecture.GPT_NEO:
-            # GPT-Neo: attention q/k/v/out + MLP c_fc/c_proj
-            target_modules = ["q_proj", "k_proj", "v_proj", "out_proj", "c_fc", "c_proj"]
-        elif self.architecture == ModelArchitecture.PHI:
-            # Phi-2: fused QKV + attention out + MLP fc1/fc2
-            target_modules = ["Wqkv", "out_proj", "fc1", "fc2"]
-        else:
-            # LLaMA / Mistral / Qwen2: attention q/k/v/o + gated MLP
-            target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
-                              "gate_proj", "up_proj", "down_proj"]
+        target_modules = target_modules_for(self.architecture)
 
         # list(self.layers) gives individual block objects so adapter object-identity
         # matching in get_lora_state_dict works correctly (not the container).

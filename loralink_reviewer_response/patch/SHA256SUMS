@@ -4,6 +4,7 @@
   "compression_engine.py": "cd3bf5d54f0b291eff49508cf707f3c36c1be0a4dd3aecaa558a5a4a78a8b41d",
   "benchmarking.py": "d1c32a1aca59870982e3e32a9f25fc1b22aef8911f8b8872c643b052e7083f6e",
   "data_loader.py": "4426646056a3afc4950dee52c6a14b3809b1b195fcd972d2e56da915fe999e4f",
-  "pipeline_engine.py": "864e438567b1d8ab6f501b41adae3b5b15462e4c3f6a78be7e1d2fdfbddb5830",
-  "model_registry.py": "74d469922f1bebeb77468676f71903ef25d331e7a17dc19debc1419dd9ddedb0"
+  "pipeline_engine.py": "be203af973a557ded1fbb7fc4f4fefeaa1aa944d129131749fe55901136eb4ba",
+  "model_registry.py": "74d469922f1bebeb77468676f71903ef25d331e7a17dc19debc1419dd9ddedb0",
+  "lora_manager.py": "cae0686cd7b81000c7356b78510c8af13530067ea575cef05a06cf13ffee666b"
 }

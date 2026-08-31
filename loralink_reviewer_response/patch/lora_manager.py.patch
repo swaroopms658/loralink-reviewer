@@ -1,0 +1,42 @@
+diff --git a/lora_manager.py b/lora_manager.py
+index f66ead2..ce07f58 100644
+--- a/lora_manager.py
++++ b/lora_manager.py
+@@ -57,13 +57,18 @@ class LoRAManager:
+ 
+         self._adapters = []
+         self.lora_parameters = []
++        matched_targets = set()
++        seen_linear_names = set()
+ 
+         for layer_block in model_layers:
+             for name, module in layer_block.named_modules():
+                 if not isinstance(module, nn.Linear):
+                     continue
+-                if not any(name.endswith(t) for t in target_modules):
++                seen_linear_names.add(name.split(".")[-1])
++                hits = [t for t in target_modules if name.endswith(t)]
++                if not hits:
+                     continue
++                matched_targets.update(hits)
+ 
+                 # --- Create LoRA matrices on the same device/dtype as the weight ---
+                 device = module.weight.device
+@@ -114,6 +119,17 @@ class LoRAManager:
+                 self._adapters.append(adapter)
+                 self.lora_parameters.extend([lora_A, lora_B])
+ 
++        # A target name that matches nothing is skipped silently above, so a
++        # stale name (e.g. Phi's remote-code "Wqkv" against the transformers
++        # implementation) quietly leaves whole submodules unadapted. Say so.
++        unmatched = [t for t in target_modules if t not in matched_targets]
++        if unmatched:
++            print(f"⚠️  LoRA target module(s) matched no modules: {unmatched}. "
++                  f"Linear submodules present: {sorted(seen_linear_names)}")
++        unadapted = sorted(seen_linear_names - matched_targets)
++        if unadapted:
++            print(f"⚠️  Linear submodules left unadapted by LoRA: {unadapted}")
++
+         if self.lora_parameters:
+             self.optimizer = torch.optim.AdamW(
+                 self.lora_parameters,

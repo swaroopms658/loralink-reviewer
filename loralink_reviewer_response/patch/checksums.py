@@ -7,7 +7,7 @@ learned position embedding) -- see patch/README.md.
 import hashlib, json, sys, pathlib
 FILES = ["main.py", "device_manager.py", "compression_engine.py",
          "benchmarking.py", "data_loader.py",
-         "pipeline_engine.py", "model_registry.py"]
+         "pipeline_engine.py", "model_registry.py", "lora_manager.py"]
 
 def _sha(p): return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
 

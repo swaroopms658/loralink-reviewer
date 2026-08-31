@@ -56,7 +56,7 @@ for seed in SEEDS:
     run_cluster(2, SHARD, seed, model=MODEL, num_samples=60, epochs=1,
                 compression=True, tag=f"stat-{{SHARD}}-s{{seed}}", results_csv=csv)
     DONE += 1
-print(f"done {{DONE}}/{{PLANNED}}")
+print(f"succeeded {{DONE}}/{{PLANNED}}, failed {{FAILED}}")
 '''),
 
     "02_task_quality": ("microsoft/phi-1_5", "e2e:0", f'''\
@@ -90,10 +90,10 @@ for arm in ARMS:
         evaluate_adapter_subprocess(MODEL, adir, ds, arm=arm, seed=seed,
                                     limit=200, out_csv=q_csv)
     except Exception as e:  # keep the arms that did finish
-        print(f"  arm {{arm}} failed: {{e}}")
-        DONE += 1; continue
+        print(f"  arm {{arm}} FAILED: {{e}}")
+        FAILED += 1; continue
     DONE += 1
-print(f"done {{DONE}}/{{PLANNED}}")
+print(f"succeeded {{DONE}}/{{PLANNED}}, failed {{FAILED}}")
 '''),
 
     "02b_convergence": ("microsoft/phi-1_5", "e2e", f'''\
@@ -110,7 +110,7 @@ else:
     run_cluster(2, "e2e", 0, model=MODEL, num_samples=50, epochs=3,
                 compression=True, tag="conv-e2e", results_csv=csv)
     DONE += 1
-print(f"done {{DONE}}/{{PLANNED}}")
+print(f"succeeded {{DONE}}/{{PLANNED}}, failed {{FAILED}}")
 '''),
 
     "03_alt_scheduling": ("EleutherAI/gpt-neo-125M", "", f'''\
@@ -138,8 +138,8 @@ for strat in STRATS:
                         results_csv=csv)
         except (RuntimeError, OSError) as e:  # TimeoutError is an OSError, not a RuntimeError
             if "PartitionInfeasible" not in str(e):
-                print(f"  {{strat}} s{{seed}}: run failed, not infeasible: {{e}}")
-                DONE += 1; continue
+                print(f"  {{strat}} s{{seed}}: run FAILED, not infeasible: {{e}}")
+                FAILED += 1; continue
             print(f"  {{strat}} s{{seed}}: infeasible ({{e}})")
             # SUMMARY_COLUMNS only -- append_rows' extrasaction="ignore" drops the
             # extra "note" key so the file keeps main.py's 18-col schema (a wider
@@ -149,7 +149,7 @@ for strat in STRATS:
                                        "n_batches": 0, "note": "infeasible"}}],
                         SUMMARY_COLUMNS)
         DONE += 1
-print(f"done {{DONE}}/{{PLANNED}}")
+print(f"succeeded {{DONE}}/{{PLANNED}}, failed {{FAILED}}")
 '''),
 
     "04_scalability_sim": ("EleutherAI/gpt-neo-125M", "", f'''\
@@ -177,9 +177,9 @@ for n in NS:
             run_cluster(n, "wikitext", 0, model=MODEL, num_samples=30,
                         tag=f"scale-n{{n}}-r{{rep}}", results_csv=csv)
         except Exception as e:  # OOM at n=8 (9 model-loading procs on one T4) -- skip cell
-            print(f"  cell skipped: {{e}}"); DONE += 1; continue
+            print(f"  cell FAILED (n={{n}} rep={{rep}}): {{e}}"); FAILED += 1; continue
         DONE += 1
-print(f"done {{DONE}}/{{PLANNED}}")
+print(f"succeeded {{DONE}}/{{PLANNED}}, failed {{FAILED}}")
 '''),
 
     "05_network_netem": ("EleutherAI/gpt-neo-125M", "", f'''\
@@ -205,9 +205,10 @@ for delay in DELAYS:
                         netem={{"delay_ms": delay, "loss_pct": loss}},
                         tag=f"net-d{{delay}}-l{{loss}}", results_csv=csv)
         except Exception as e:  # net-shim drop -> ConnectionError -> coordinator fails; skip
-            print(f"  cell skipped: {{e}}"); DONE += 1; continue
+            print(f"  cell FAILED (delay={{delay}}ms loss={{loss}}%): {{e}}")
+            FAILED += 1; continue
         DONE += 1
-print(f"done {{DONE}}/{{PLANNED}}")
+print(f"succeeded {{DONE}}/{{PLANNED}}, failed {{FAILED}}")
 '''),
 }
 

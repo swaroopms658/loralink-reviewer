@@ -40,6 +40,36 @@ def test_walltime_guard_in_body(name):
 
 
 @pytest.mark.parametrize("name", NAMES)
+def test_failures_are_not_counted_as_successes(name):
+    """The manifest is a provenance record: a crashed run must not read as done.
+
+    NB04/NB05 previously did `DONE += 1` in their except branch, so a sweep where
+    every cell failed still reported "done 12/12" and shipped a manifest saying so.
+    """
+    import ast
+
+    nb, _ = _src(name)
+    tree = ast.parse(nb.cells[3].source)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ExceptHandler):
+            continue
+        bumped = {
+            t.target.id for t in ast.walk(node)
+            if isinstance(t, ast.AugAssign) and isinstance(t.target, ast.Name)
+        }
+        assert "DONE" not in bumped, f"{name}: failure handler increments DONE"
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_manifest_reports_failures_and_files(name):
+    nb, _ = _src(name)
+    last = nb.cells[-1].source
+    assert '"failed": FAILED' in last, name
+    assert '"succeeded": DONE' in last, name
+    assert "result_files" in last, name
+
+
+@pytest.mark.parametrize("name", NAMES)
 def test_download_cell_globs_summary(name):
     nb, _ = _src(name)
     last = nb.cells[-1].source

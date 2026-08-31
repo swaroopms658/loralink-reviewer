@@ -400,8 +400,32 @@ def save_lora_adapters(
 
     os.makedirs(output_path, exist_ok=True)
 
-    adapter_model_path = os.path.join(output_path, "adapter_model.bin")
-    torch.save(all_lora_weights, adapter_model_path)
+    # An adapter whose B matrices are all zero is a no-op: LoRA initializes B to
+    # zero, so all-zero means nothing survived training into this dict. It loads
+    # without error and evaluates identically to the base model, which is
+    # indistinguishable from "compression made no difference" unless we say so.
+    b_tensors = [v for k, v in all_lora_weights.items() if "lora_B" in k]
+    if b_tensors:
+        max_b = max(float(v.abs().max()) for v in b_tensors)
+        if max_b == 0.0:
+            print("⚠️  WARNING: every lora_B is zero — this adapter is a no-op and "
+                  "will evaluate identically to the base model.")
+        else:
+            print(f"   lora_B max magnitude: {max_b:.3e} ({len(b_tensors)} tensors)")
+    else:
+        print("⚠️  WARNING: no lora_B tensors in the adapter state dict.")
+
+    # peft looks for adapter_model.safetensors first and only falls back to the
+    # .bin; write safetensors as the primary so the load path is unambiguous.
+    adapter_model_path = os.path.join(output_path, "adapter_model.safetensors")
+    try:
+        from safetensors.torch import save_file
+        save_file({k: v.contiguous() for k, v in all_lora_weights.items()},
+                  adapter_model_path)
+    except Exception as exc:
+        print(f"safetensors save failed ({exc}); writing .bin only")
+        adapter_model_path = os.path.join(output_path, "adapter_model.bin")
+        torch.save(all_lora_weights, adapter_model_path)
     print(f"Saved {len(all_lora_weights)} LoRA parameters to {adapter_model_path}")
 
     file_size_mb = os.path.getsize(adapter_model_path) / (1024 * 1024)

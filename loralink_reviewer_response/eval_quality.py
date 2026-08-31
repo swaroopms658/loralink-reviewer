@@ -49,6 +49,34 @@ def _release_model(model) -> None:
         pass
 
 
+def _assert_adapter_is_live(model, adapter_dir) -> None:
+    """Refuse to evaluate an adapter that loaded as a no-op.
+
+    LoRA initializes `lora_B` to zero, so an all-zero B in the *live* model means
+    the saved weights never reached it — peft builds the adapter layers from
+    `adapter_config.json` regardless, so a name or format mismatch loads cleanly
+    and silently leaves the base model. Observed on NB02: three separately
+    trained arms returned perplexity 42.4007 and BLEU 4.291 to full precision,
+    because all three were the bare base model.
+    """
+    total = nonzero = 0
+    for name, param in model.named_parameters():
+        if "lora_B" in name:
+            total += 1
+            nonzero += bool(param.abs().max().item())
+
+    if total == 0:
+        raise RuntimeError(
+            f"adapter at {adapter_dir!r} produced no lora_B parameters: "
+            f"target_modules in adapter_config.json matched nothing in the model")
+    if nonzero == 0:
+        raise RuntimeError(
+            f"adapter at {adapter_dir!r} loaded as a no-op — all {total} lora_B "
+            f"tensors are zero, so this would evaluate the base model and report "
+            f"it as an adapted result. Check that the saved key names and file "
+            f"format match what peft reads.")
+
+
 def _load(base_model, adapter_dir):
     tok = AutoTokenizer.from_pretrained(base_model)
     if tok.pad_token is None:
@@ -57,6 +85,7 @@ def _load(base_model, adapter_dir):
     if adapter_dir:
         from peft import PeftModel  # lazy: only needed for adapter eval
         model = PeftModel.from_pretrained(model, adapter_dir)
+        _assert_adapter_is_live(model, adapter_dir)
     model.eval()
     model.to("cuda" if torch.cuda.is_available() else "cpu")
     return model, tok

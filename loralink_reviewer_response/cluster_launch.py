@@ -77,13 +77,16 @@ def _worker_log_tail(paths, limit=20):
 
 
 def _worker_cmd(ip, model, seed):
-    return [sys.executable, _MAIN, "--role", "worker",
+    # -u: worker stdout is redirected to a file, so it would otherwise be block
+    # buffered and discarded when we SIGTERM the process -- exactly the output
+    # that explains why a worker stopped responding.
+    return [sys.executable, "-u", _MAIN, "--role", "worker",
             "--host-ip", ip, "--base-model", model, "--seed", str(seed)]
 
 
 def _coord_cmd(coord_ip, worker_ips, *, model, dataset, seed, num_samples,
                epochs, eval_holdout, strategy, tag, csv_path):
-    return [sys.executable, _MAIN, "--role", "coordinator",
+    return [sys.executable, "-u", _MAIN, "--role", "coordinator",
             "--host-ip", coord_ip, "--workers", ",".join(worker_ips),
             "--base-model", model, "--dataset", dataset, "--seed", str(seed),
             "--num-samples", str(num_samples), "--epochs", str(epochs),
@@ -106,6 +109,7 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
     env["PYTHONPATH"] = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     env["LORALINK_LOSSY_COMPRESSION"] = "1" if compression else "0"
     env.setdefault("LORALINK_FAKE_BENCHMARK", "0")
+    env["PYTHONUNBUFFERED"] = "1"  # belt and braces with -u; see _worker_cmd
 
     netem_mode = "none"
     procs = []

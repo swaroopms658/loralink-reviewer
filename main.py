@@ -300,7 +300,13 @@ def _worker_message_handler(sender_ip: str, message: Message):
                 PIPELINE_ENGINE.forward_step_remote(micro_batch_id, tensor, labels_data)
                 
             except Exception as e:
+                # Full stack: this handler runs on a network thread, so a bare
+                # message here is all the coordinator ever sees before its
+                # gradient wait times out.
+                import traceback
                 print(f"Error processing tensor: {e}")
+                traceback.print_exc()
+                sys.stdout.flush()
 
         elif message.message_type == MessageType.GRADIENT:
             if PIPELINE_ENGINE is None:
@@ -326,7 +332,10 @@ def _worker_message_handler(sender_ip: str, message: Message):
                 PIPELINE_ENGINE.backward_step(micro_batch_id, gradient, loss_value)
                 
             except Exception as e:
+                import traceback
                 print(f"Error processing gradient: {e}")
+                traceback.print_exc()
+                sys.stdout.flush()
 
         elif message.message_type == MessageType.GET_LORA_WEIGHTS:
             print(f"Received request for LoRA weights from {sender_ip}")
@@ -373,7 +382,10 @@ def _worker_message_handler(sender_ip: str, message: Message):
             sys.exit(0)  # Graceful exit
                 
     except Exception as e:
+        import traceback
         print(f"Error in worker message handler for {sender_ip}: {e}")
+        traceback.print_exc()
+        sys.stdout.flush()
 
 
 def save_lora_adapters(

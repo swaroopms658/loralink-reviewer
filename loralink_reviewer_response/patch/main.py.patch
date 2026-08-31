@@ -1,5 +1,5 @@
 diff --git a/main.py b/main.py
-index 34ba3b4..f4a72aa 100644
+index 34ba3b4..2dfadfe 100644
 --- a/main.py
 +++ b/main.py
 @@ -63,6 +63,9 @@ ALL_WEIGHTS_RECEIVED = threading.Event()
@@ -70,7 +70,32 @@ index 34ba3b4..f4a72aa 100644
                  )
                  NETWORK_MANAGER.send_message(config.master_ip, 29500, ready_message)
                  print(f"✅ Sent WORKER_READY signal to coordinator {config.master_ip}")
-@@ -342,7 +349,7 @@ def _worker_message_handler(sender_ip: str, message: Message):
+@@ -293,7 +300,13 @@ def _worker_message_handler(sender_ip: str, message: Message):
+                 PIPELINE_ENGINE.forward_step_remote(micro_batch_id, tensor, labels_data)
+                 
+             except Exception as e:
++                # Full stack: this handler runs on a network thread, so a bare
++                # message here is all the coordinator ever sees before its
++                # gradient wait times out.
++                import traceback
+                 print(f"Error processing tensor: {e}")
++                traceback.print_exc()
++                sys.stdout.flush()
+ 
+         elif message.message_type == MessageType.GRADIENT:
+             if PIPELINE_ENGINE is None:
+@@ -319,7 +332,10 @@ def _worker_message_handler(sender_ip: str, message: Message):
+                 PIPELINE_ENGINE.backward_step(micro_batch_id, gradient, loss_value)
+                 
+             except Exception as e:
++                import traceback
+                 print(f"Error processing gradient: {e}")
++                traceback.print_exc()
++                sys.stdout.flush()
+ 
+         elif message.message_type == MessageType.GET_LORA_WEIGHTS:
+             print(f"Received request for LoRA weights from {sender_ip}")
+@@ -342,7 +358,7 @@ def _worker_message_handler(sender_ip: str, message: Message):
                  response_message = Message(
                      message_type=MessageType.LORA_WEIGHTS_RESPONSE,
                      payload=weights_payload,
@@ -79,7 +104,18 @@ index 34ba3b4..f4a72aa 100644
                  )
                  
                  # --- FIX: Send to Master, NOT Sender ---
-@@ -421,13 +428,18 @@ def save_lora_adapters(
+@@ -366,7 +382,10 @@ def _worker_message_handler(sender_ip: str, message: Message):
+             sys.exit(0)  # Graceful exit
+                 
+     except Exception as e:
++        import traceback
+         print(f"Error in worker message handler for {sender_ip}: {e}")
++        traceback.print_exc()
++        sys.stdout.flush()
+ 
+ 
+ def save_lora_adapters(
+@@ -421,13 +440,18 @@ def save_lora_adapters(
      print(f"  target_modules          : {target_modules}")
      print(f"  r (rank)                : {lora_rank}")
  
@@ -99,7 +135,7 @@ index 34ba3b4..f4a72aa 100644
      all_device_ips = [coordinator_ip] + worker_ips
      print(f"✅ Starting coordinator for cluster: {all_device_ips}")
      
-@@ -442,11 +454,11 @@ def run_coordinator(args):
+@@ -442,11 +466,11 @@ def run_coordinator(args):
      logging.basicConfig(level=logging.INFO, stream=sys.stdout, force=True)
  
  
@@ -113,7 +149,7 @@ index 34ba3b4..f4a72aa 100644
      DEVICE_MANAGER = DeviceManager(all_device_ips, model_config)
  
      remote_worker_ips = worker_ips
-@@ -477,7 +489,7 @@ def run_coordinator(args):
+@@ -477,7 +501,7 @@ def run_coordinator(args):
          sys.exit(1)
  
      print("✅ Computing model partition...")
@@ -122,7 +158,7 @@ index 34ba3b4..f4a72aa 100644
  
      print("✅ Sending configurations to workers...")
      
-@@ -565,26 +577,79 @@ def run_coordinator(args):
+@@ -565,26 +589,79 @@ def run_coordinator(args):
      if tokenizer.pad_token is None:
          tokenizer.pad_token = tokenizer.eos_token
  
@@ -219,7 +255,7 @@ index 34ba3b4..f4a72aa 100644
  
      print("✅ Training complete. Starting model reconstruction...")
      
-@@ -843,10 +908,11 @@ def run_coordinator(args):
+@@ -843,10 +920,11 @@ def run_coordinator(args):
  #     print(f"Created model index with {len(weight_map)} weights")
  
  def run_worker(args):
@@ -233,7 +269,7 @@ index 34ba3b4..f4a72aa 100644
      NETWORK_MANAGER.start_server()
  
      print("✅ Worker ready, waiting for commands...")
-@@ -864,15 +930,58 @@ if __name__ == "__main__":
+@@ -864,15 +942,58 @@ if __name__ == "__main__":
      parser.add_argument("--workers", type=str,
                        help="Comma-separated list of worker IPs (coordinator only)")
      parser.add_argument("--host-ip", type=str,

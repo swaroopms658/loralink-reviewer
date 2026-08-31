@@ -141,6 +141,32 @@ def test_subprocess_helper_raises_with_child_output(monkeypatch):
         eval_quality.evaluate_adapter_subprocess("m", None, "e2e")
 
 
+def test_child_processes_run_unbuffered():
+    """Buffered child stdout is discarded on SIGTERM, hiding the failure cause."""
+    wcmd = cluster_launch._worker_cmd("127.0.0.2", "m", 0)
+    ccmd = cluster_launch._coord_cmd("127.0.0.1", ["127.0.0.2"], model="m",
+                                     dataset="wikitext", seed=0, num_samples=1,
+                                     epochs=1, eval_holdout=0, strategy="smart",
+                                     tag="t", csv_path="x.csv")
+    assert "-u" in wcmd, "worker must run unbuffered"
+    assert "-u" in ccmd, "coordinator must run unbuffered"
+    assert wcmd.index("-u") < wcmd.index("--role"), "-u must precede the script"
+
+
+def test_worker_errors_print_a_traceback():
+    """A bare str(e) on a network thread is not enough to diagnose a stall."""
+    import inspect
+    import re
+
+    import main
+
+    src = inspect.getsource(main._worker_message_handler)
+    for label in ("Error processing tensor", "Error processing gradient"):
+        idx = src.index(label)
+        window = src[idx:idx + 300]
+        assert re.search(r"traceback\.print_exc\(\)", window), label
+
+
 def test_worker_log_paths_are_per_worker():
     paths = cluster_launch._worker_log_paths(tmp := __import__("pathlib").Path("/tmp/x.csv"), 3)
     assert len(paths) == 3

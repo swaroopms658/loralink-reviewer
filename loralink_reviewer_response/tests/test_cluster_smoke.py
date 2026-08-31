@@ -49,9 +49,12 @@ def test_child_cmds_use_absolute_main():
         num_samples=6, epochs=1, eval_holdout=0, strategy="smart", tag="t",
         csv_path="/tmp/r.csv")
     for cmd in (wcmd, ccmd):
-        main_arg = cmd[1]
+        # find the script rather than assuming its index: interpreter flags
+        # such as -u precede it.
+        main_args = [a for a in cmd if a.endswith("main.py")]
+        assert len(main_args) == 1, cmd
+        main_arg = main_args[0]
         assert os.path.isabs(main_arg), main_arg
-        assert main_arg.endswith("main.py")
         assert os.path.isfile(main_arg)
 
 

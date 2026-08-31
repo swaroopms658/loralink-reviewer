@@ -1,240 +1,203 @@
-# LoraLink — correctness findings that affect the paper
+# LoraLink — reviewer concerns and results
 
 **Date:** 2026-08-31
-**Found by:** running the Abhay & Nikhil reviewer-response package on Colab Free T4
-**Code baseline:** `55e1714` (the tree the reviewer-response work started from)
-**Repo with fixes + full evidence:** https://github.com/swaroopms658/loralink-reviewer
+**Model (ours):** `EleutherAI/gpt-neo-125M` (system metrics), `microsoft/phi-1_5` (task quality)
+**Hardware (ours):** Google Colab Free T4, single box, loopback pipeline
+**Repo:** https://github.com/swaroopms658/loralink-reviewer
+
+Every number is tagged `[ours]` (we ran it) or `[published, ref]` (transcribed
+from a paper, never re-run).
+
+> **Status:** only concern 1 has complete results so far. Four correctness
+> defects were found while running this package — the worst disabled attention
+> in half the layers — and every measurement taken before they were fixed has
+> been discarded. Details in `patch/README.md`. **These defects also affect the
+> paper's existing convergence figures and ΔPPL table**; see "Bearing on the
+> paper" at the end.
 
 ---
 
-## Bottom line
+## 1 — Statistical validation (repeated runs, std, confidence intervals)
 
-Four defects in LoraLink's model reconstruction meant the framework **could not
-learn**. The worst of them disabled attention outright in half the GPT-Neo
-layers. All four are fixed and verified against a reference forward pass, but
-they are the code path that produced the paper's convergence figures and ΔPPL
-ablation.
+**1 — Reviewer concern:** loss/perplexity numbers were reported from a single
+run; report repeated runs with standard deviations and confidence intervals.
+(R3.4, R3-Q7)
 
-The **systems** contribution (speedup, bandwidth saved, partitioning) most
-likely survives. The **quality and convergence** evidence does not.
+**2 — Results:** ✅ complete for WikiText-2; E2E shard still to run.
 
----
+WikiText-2, gpt-neo-125M, 2-worker loopback pipeline, 60 mini-batches, 1 epoch,
+compression ON, seeds `{0,1,2,3,4}`.
 
-## Check this first — it decides how much is affected
-
-I verified these defects in the code at `55e1714`, and the paper states it used
-this framework. I have **not** verified that the runs which produced
-Fig. `loss_e2e`, Fig. `grid_convergence` and the ΔPPL table came from this exact
-code state.
-
-**If those figures were produced from a different branch or an earlier version,
-the blast radius changes.** That is the cheapest possible next step and it
-determines everything below.
-
----
-
-## What was wrong
-
-Each defect was only exposed by fixing the one before it, so the numbering is a
-discovery order, not a priority ranking.
-
-### 1. The forward pass skipped the final normalization layer
-
-`pipeline_engine` composed the model as `wte → blocks → lm_head`. The reference
-implementation is:
-
-```
-inputs_embeds   = wte(input_ids)
-position_embeds = wpe(position_ids)        <- LoraLink: missing
-hidden_states   = inputs_embeds + position_embeds
-... transformer blocks ...
-hidden_states   = ln_f(hidden_states)      <- LoraLink: missing
-logits          = lm_head(hidden_states)
-```
-
-Without the final norm the residual stream reaches the unembedding
-unnormalized, so logits are inflated by roughly two orders of magnitude.
-Cross-entropy sat in the **thousands** instead of ~4–6.
-
-Missing `wpe` additionally left GPT-Neo with **no positional signal at all** — it
-uses learned absolute position embeddings, so the RoPE path never compensated.
-
-Affects every architecture: GPT-Neo and Phi (`ln_f` / `final_layernorm`),
-LLaMA/Mistral/Qwen2 (`model.norm`).
-
-### 2. The loss was computed over padding
-
-`data_loader` pads every sequence to 256 tokens. The pipeline built
-`labels = input_ids.clone()` and called `cross_entropy` with no `ignore_index`,
-so the loss averaged over ~256 positions that were mostly `<pad>`. The model
-learned the trivial "emit padding" rule: 60 LoRA steps took the loss from 10.29
-to **0.22**, far below what a 125M model reaches on real text.
-
-This affected the training loss curve only. `eval_quality` scores one unpadded
-text at a time, so reported perplexity was never contaminated by padding.
-
-### 3. Attention was disabled in half the layers — the significant one
-
-Blocks are built on the meta device, materialized with `to_empty()`, then filled
-by `load_state_dict(..., strict=False, assign=True)`. That restores
-*parameters*. It does **not** restore buffers registered `persistent=False`,
-because those never appear in a checkpoint — so they keep whatever uninitialized
-memory `to_empty()` left behind.
-
-GPT-Neo's causal mask, `attn.attention.bias`, is exactly such a buffer, and it is
-applied unconditionally:
-
-```python
-attn_weights = torch.where(causal_mask, attn_weights, mask_value)
-```
-
-Measured after materialization: **0 of 1024 cells unmasked** — every attention
-weight replaced by the mask value.
-
-The checkpoint happens to contain `bias` for the *global*-attention layers
-`{0,2,4,6,8,10}`, so those were restored by accident. The six odd-numbered
-*local*-attention layers had no checkpoint entry and stayed corrupt.
-**Six of twelve layers ran with a garbage causal mask.**
-
-With attention contributing nothing, the model predicted from token statistics
-alone, which pins cross-entropy near the unigram entropy of English (~7.5 nats).
-That is exactly what we measured, and it is why the compression ablation showed
-nothing — attention was dead in every arm:
-
-```
-1 worker,  lossless    mean loss 7.604
-2 workers, lossless    mean loss 7.321
-2 workers, compressed  mean loss 7.533
-```
-
-### 4. On Phi, LoRA never adapted attention
-
-`pipeline_engine` requested target modules `["Wqkv", "out_proj", "fc1", "fc2"]` —
-the names used by the old *remote-code* `microsoft/phi-1_5`. The transformers
-implementation names them `q_proj / k_proj / v_proj / dense` plus `fc1 / fc2`.
-
-Only the two MLP projections matched, and unmatched names were skipped silently.
-Phi runs adapted **2 modules per layer instead of 6**, with attention untouched.
-
-GPT-Neo and LLaMA were checked and match their blocks correctly, so this one is
-specific to the Phi experiments.
-
-### 5. Seeds varied almost nothing (experimental design, not a bug)
-
-The loader used `shuffle=False`, so all five seeds trained on the same samples in
-the same order. The only seed-dependent quantity was LoRA's `A` initialization,
-and since `B` starts at zero and 60 steps at lr 1e-4 barely move it, the runs
-were near-identical: cross-seed std **0.0016** on a loss of 4.77.
-
-That reports determinism, not the run-to-run robustness reviewers R3.4 / R3-Q7
-asked for. Training now shuffles under a generator seeded from `--seed`.
-Evaluation order is unchanged and batch size stays 1, per the paper's
-hyperparameter table.
-
----
-
-## Evidence
-
-Each fix moved the loss, and the final state was checked against
-`AutoModelForCausalLM` on identical batches — the check that would have caught
-all of this at once.
-
-| state | mean loss | reading |
-|---|---|---|
-| original code | **5322** | logits unnormalized; no learning |
-| + final norm & `wpe` | 5.12 | right scale, but scoring padding (10.29 → 0.22) |
-| + padding masked | 7.4, flat | attention dead; unigram entropy |
-| + causal mask restored | **4.33** | matches reference |
-| **HF reference (frozen)** | **4.510** | ground truth, same 30 batches |
-
-The fixed pipeline coming in ~0.18 *below* the frozen reference is the LoRA
-adapters actually learning over the measured batches.
-
-Two results follow, and both are meaningful only now that attention works:
-
-- **the pipeline hop is free** — 1 worker 4.331 vs 2 workers 4.329 (−0.002)
-- **lossy compression costs +0.038 nats (+0.9 %)** — 4.329 → 4.367
-
-Statistical validation after the shuffle fix, 5 seeds on WikiText-2:
-mean **4.7331**, std **0.0195**, 95 % Student-t CI **[4.7089, 4.7574]**, n = 5.
-
----
-
-## What this means for the paper
-
-### Likely survives — but re-measure to confirm
-
-These measure wall time and bytes moved, which do not depend on whether the
-causal mask was correct:
-
-- 2.4× training-time acceleration
-- 93.6 % step-latency reduction
-- 325.97–646.95 MB prevented per task; 2.8×–4.8× volume reduction
-- Smart Partitioning behaviour and pipeline scaling
-
-One caveat: sparsification is **magnitude-based**, so activations with a
-different distribution compress differently. The mechanism holds; the exact
-ratios should be re-measured.
-
-### Invalid — produced with attention disabled
-
-- Fig. `loss_e2e` and Fig. `grid_convergence` (all convergence trajectories)
-- The ΔPPL ablation: 0.7625 % degradation on Dolly-15k; −2.09 % vs −2.02 % on E2E
-- §542: *"rigorously validate that LoraLink's multi-hop pipeline parallelism does
-  not degrade model convergence"*
-- The LoRA Frobenius-norm analysis (A-norm 1.64–1.67), since Phi's attention
-  adapters never existed
-
-Worth noting: the reported ΔPPL values are *suspiciously small*, which is exactly
-what adapters that barely learned would produce. That is corroborating evidence,
-not a coincidence.
-
----
-
-## Recommended next steps
-
-1. **Confirm which code produced the published figures.** Everything above scales
-   with the answer.
-2. **Tell the co-authors before the rebuttal is drafted.** This gets worse the
-   longer it waits, and far worse if a reviewer finds it.
-3. **Re-measure the systems claims** to confirm they hold. The harness already
-   exists.
-4. **Regenerate the convergence and ΔPPL figures.** Larger job than the Colab
-   package — the paper used 2.7 B models on 4 nodes.
-5. **Consider disclosing it in the response.** *"We found and corrected a defect
-   in our forward pass; here are the corrected numbers with the statistical
-   validation you asked for"* reads as rigor. The same fact discovered by a
-   reviewer reads as carelessness — and concerns 1 and 3 already require re-runs,
-   so this is the natural moment.
-
----
-
-## Where the raw evidence lives
-
-All in https://github.com/swaroopms658/loralink-reviewer
-
-| file | contents |
+| statistic | value |
 |---|---|
-| `loralink_reviewer_response/patch/README.md` | per-defect write-up, with the reference-implementation comparisons |
-| `loralink_reviewer_response/VERIFICATION.md` | the full defect ledger, including operational issues not covered here |
-| `loralink_reviewer_response/patch/*.patch` | every source diff versus `55e1714` |
-| `loralink_reviewer_response/tests/test_final_norm.py` | regression guard, defect 1 |
-| `loralink_reviewer_response/tests/test_loss_masking.py` | regression guard, defect 2 |
-| `loralink_reviewer_response/tests/test_nonpersistent_buffers.py` | regression guard, defect 3 |
-| `loralink_reviewer_response/tests/test_target_modules.py` | regression guard, defect 4 |
-| `loralink_reviewer_response/tests/test_seeded_shuffle.py` | regression guard, defect 5 |
+| mean cross-entropy loss | **4.7331** `[ours]` |
+| sample std (n=5) | **0.0195** |
+| 95 % Student-t CI | **[4.7089, 4.7574]** |
+| per-seed means | 4.7267, 4.7153, 4.7629, 4.7189, 4.7420 |
+| mean step latency | 0.87 s `[ours]` |
+| overall compression ratio | 1.44× `[ours]` |
 
-Offline test suite: **131 passing**, up from 76 before this work.
+Run-to-run spread is **±0.4 % relative** — the procedure is reproducible.
 
-### The common root, for whoever maintains this next
+*What the seed varies:* LoRA initialization **and** training data order (the
+loader shuffles under a generator seeded from `--seed`). The sample set is held
+fixed at the same 60 examples, so this interval measures sensitivity to
+initialization and ordering, not sampling variability over the corpus. Batch
+size is 1 throughout, per the paper's hyperparameter table.
 
-All four correctness defects come from the same design choice: the pipeline
-reconstructs the model by hand — meta-device shells, `to_empty()`, and a partial
-`state_dict` load — instead of going through HuggingFace's loader. That approach
-is **silent by construction**. Anything the checkpoint does not contain — a
-module the code forgot to create, a non-persistent buffer, a renamed submodule —
-ends up absent or uninitialized with no error raised. The model still runs and
-still produces a loss. It is simply the wrong loss.
+---
 
-Any future change to the reconstruction path should be validated against a
-reference `AutoModelForCausalLM` forward on identical inputs.
+## 2 — Downstream task quality, pre/post compression
+
+**1 — Reviewer concern:** report accuracy / generation quality, not only loss and
+perplexity, and show the effect of compression on it. 🔴 raised by all three
+reviewers.
+
+**2 — Results:** ⚠️ **invalid — must be re-run.** The completed E2E shard was
+produced while LoRA was adapting only the MLP on Phi (defect 4 below), so its
+BLEU/ROUGE/PPL numbers are not usable. Six shards pending
+(`e2e:{0,1,2}`, `wikitext:{0,1,2}`).
+
+What *is* established, from the loss-side ablation on gpt-neo-125M
+(30 batches, seed 0, WikiText-2):
+
+| arm | mean loss | interpretation |
+|---|---|---|
+| 1 worker, lossless | 4.331 `[ours]` | no pipeline hop, no lossy compression |
+| 2 workers, lossless | 4.329 `[ours]` | **pipeline hop is free** (−0.002) |
+| 2 workers, compressed | 4.367 `[ours]` | **compression costs +0.038 nats (+0.9 %)** |
+
+For reference, `AutoModelForCausalLM` frozen on the identical batches scores
+**4.510**; the pipeline coming in below that is the LoRA adapters learning.
+
+---
+
+## 3 — Longer training / stronger convergence
+
+**1 — Reviewer concern:** training runs are too short to demonstrate convergence.
+
+**2 — Results:** ⏳ not yet run (`02b_convergence`, Phi-1.5, 3 epochs, ~150
+batches).
+
+Note on interpretation: NB01's single-epoch curve is weak evidence for this
+concern regardless, because with batch size 1 and one pass over the data each
+step sees an unseen sample, so the curve tracks sample difficulty more than
+learning (per-batch spread was 5.07 nats). The 3-epoch run, where samples repeat,
+is the real evidence.
+
+---
+
+## 4 — Strong baselines (DeepSpeed, FSDP, SplitLoRA, HSplitLoRA, Petals, QLoRA, Megatron-LM)
+
+**1 — Reviewer concern:** compare against strong distributed / parameter-efficient
+baselines. 🔴 raised by all three reviewers.
+
+**2 — Results:** ✅ complete — **published numbers only**, no competitor was
+re-run. Full table with per-number hardware, scale and verbatim source quotes in
+`baselines/published_baselines.csv` and `baselines/SOURCES.md`.
+
+Direct comparators (same regime — commodity hardware, split/decentralized):
+
+| method | number | source |
+|---|---|---|
+| SplitLoRA | converges within **0.04 PPL** of centralized LoRA, GPT-2-M on E2E | `[published, lin2024splitlora]` |
+| SplitLoRA | centralized LoRA needs **4.8×** the convergence latency | `[published, lin2024splitlora]` |
+| HSplitLoRA | **1.5×** convergence speedup vs SplitLoRA, LLaMA-2-7B | `[published, lin2025hsplitlora]` |
+| HSplitLoRA | SplitLoRA PPL rises **0.11** under device heterogeneity | `[published, lin2025hsplitlora]` |
+| Petals | **1 step/s** generation, BLOOM-176B over the internet | `[published, borzunov2023petals]` |
+
+Context / trend only (data-centre hardware, explicitly **not** like-for-like):
+QLoRA (48 GB single-GPU for 65B; 53.1 % MMLU at 4-bit)
+`[published, dettmers2023qlora]`; DeepSpeed ZeRO (15 PFLOPS on 400 V100s)
+`[published, rajbhandari2020zero]`; PyTorch FSDP (186 TFLOPS/GPU on 128–512
+A100s) `[published, zhao2023fsdp]`; Megatron-LM (52 % of peak on 3072 A100s)
+`[published, narayanan2021megatron]`.
+
+---
+
+## 5 — Scalability beyond 4 nodes
+
+**1 — Reviewer concern:** results stop at 4 nodes; show behaviour beyond that. 🟠
+
+**2 — Results:** ⏳ not yet run (`04_scalability_sim`, 2/4/6/8 workers).
+
+Will be labelled **single-box loopback simulation, not WAN** in every table and
+figure. Concedes that loopback ≠ real network and points to the paper's
+real 4-node Topology-A numbers as the physical evidence.
+
+---
+
+## 6 — Real cross-platform mixed-device execution (Windows / macOS / Linux)
+
+**1 — Reviewer concern:** the cross-platform claim is not backed by macOS runs. 🟡
+
+**2 — Results:** ✅ answered in prose — **no runs, and none claimed.**
+
+Recommendation: soften the portability claim to **Windows + Linux verified,
+macOS portable by construction** (the stack uses only primitives common to
+Windows and POSIX). GitHub Actions `windows/macos/ubuntu-latest` is the only free
+source of real macOS runners and would settle it, but it is out of scope for a
+Colab package.
+
+---
+
+## 7 — Network-condition study (latency, packet loss, bandwidth)
+
+**1 — Reviewer concern:** no study of how the system behaves under realistic
+network conditions. ⚪
+
+**2 — Results:** ⏳ not yet run (`05_network_netem`, delay × loss sweep).
+
+Will be labelled loopback + `tc netem` emulation, not WAN. Packet-loss cells are
+expected to return partial results — a dropped send raises `ConnectionError` with
+no retry path, which is itself a finding worth reporting.
+
+---
+
+## 8 — Alternative scheduling vs Smart Partitioning
+
+**1 — Reviewer concern:** Smart Partitioning is not compared against simpler
+schedulers. ⚪
+
+**2 — Results:** ⏳ not yet run (`03_alt_scheduling`: smart, round-robin,
+compute-proportional, random × 3 seeds).
+
+Naive strategies that produce an infeasible assignment fail loudly rather than
+being silently repaired — how often a scheduler breaks is part of the comparison.
+
+---
+
+## Bearing on the paper
+
+Four defects in the model reconstruction meant the framework **could not learn**
+until they were fixed. They are in the code path that produced the paper's
+convergence figures and ΔPPL ablation.
+
+| # | defect | effect |
+|---|---|---|
+| 1 | forward pass omitted the final norm, and GPT-Neo's `wpe` | loss ~5322; no learning |
+| 2 | loss scored over padding | model learned to emit `<pad>`; loss → 0.22 |
+| 3 | `to_empty()` left the causal-mask buffer uninitialized | **attention dead in 6 of 12 GPT-Neo layers**; loss pinned at ~7.4 |
+| 4 | stale Phi LoRA target names (`Wqkv`/`out_proj`) | attention never adapted on Phi; 2 modules/layer instead of 6 |
+
+Evidence chain: **5322 → 5.12 → 7.4 → 4.33**, against a frozen HF reference of
+**4.510** on identical batches.
+
+**Likely survives, but re-measure:** the 2.4× speedup, 93.6 % latency reduction,
+325.97–646.95 MB saved, and Smart Partitioning behaviour — these measure wall
+time and bytes moved, which do not depend on the causal mask being correct.
+(Sparsification is magnitude-based, so exact ratios may shift.)
+
+**Invalid — produced with attention disabled:** Fig. `loss_e2e` and
+Fig. `grid_convergence`; the ΔPPL ablation (0.7625 % on Dolly, −2.09 % vs
+−2.02 % on E2E); §542's "does not degrade model convergence"; and the LoRA
+Frobenius-norm analysis. The reported ΔPPL values being suspiciously small is
+consistent with adapters that barely learned.
+
+**Answer this first:** these defects are verified in the code at `55e1714`. It is
+**not confirmed** that this exact state produced the published figures — if they
+came from a different branch, the blast radius changes.
+
+Full per-defect write-up with reference-implementation comparisons:
+`patch/README.md`. Complete ledger including operational issues:
+`VERIFICATION.md`. Offline test suite: 131 passing, up from 76.

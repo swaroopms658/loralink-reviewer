@@ -38,8 +38,12 @@ def _apply_netem(netem):
 
 
 def _clear_netem():
-    subprocess.run(["tc", "qdisc", "del", "dev", "lo", "root"],
-                   check=False, capture_output=True)
+    # Best-effort teardown: it runs on the failure path and from `finally`, and
+    # must never raise. `tc` may be missing entirely (non-Linux) or refuse
+    # because no qdisc was installed.
+    with contextlib.suppress(Exception):
+        subprocess.run(["tc", "qdisc", "del", "dev", "lo", "root"],
+                       check=False, capture_output=True)
 
 
 _MAIN = str(REPO_ROOT / "main.py")  # absolute: children run with cwd=workdir
@@ -122,10 +126,20 @@ def run_cluster(n_workers, dataset, seed, *, model="EleutherAI/gpt-neo-125M",
     worker_log_handles = []
     try:
         if netem:
+            # `tc` being present and us being root is not enough: Colab runs under
+            # gVisor, which ships the binary but no sch_netem module, so every
+            # `tc qdisc add` exits 2. Try it and fall back on any failure.
+            applied = False
             if _tc_available():
                 netem_mode = "tc-netem"  # set first so finally clears a partial install
-                _apply_netem(netem)
-            else:
+                try:
+                    _apply_netem(netem)
+                    applied = True
+                except Exception as exc:
+                    print(f"tc netem unavailable ({exc}); using in-process shim")
+                    _clear_netem()       # drop any partial qdisc before switching
+                    netem_mode = "none"
+            if not applied:
                 netem_mode = "in-process-shim"
                 env["LORALINK_NET_SHIM"] = f'{netem.get("delay_ms", 0)},{netem.get("loss_pct", 0)}'
         csv_path.with_name(csv_path.name + ".netem").write_text(netem_mode)

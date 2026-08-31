@@ -985,11 +985,19 @@ if __name__ == "__main__":
         _shim_delay = float(_d_ms) / 1000.0
         _shim_loss = float(_loss) / 100.0
         _shim_orig = _np_mod.NetworkManager.send_message
+        # Loss is modelled the way TCP actually experiences it: a lost segment is
+        # retransmitted after a timeout, so the cost is latency, not a broken
+        # connection. Linux's TCP_RTO_MIN is 200 ms; we use that. Modelling loss
+        # as ConnectionError instead would measure LoraLink's lack of an
+        # application-level retry path, which is a separate question from "how
+        # does the system behave on a lossy link".
+        _SHIM_RTO_S = 0.2
+
         def _shim_send(peer_ip, peer_port, message):
             if _shim_delay:
                 _shim_time.sleep(_shim_delay)
             if _shim_loss and _shim_rand.random() < _shim_loss:
-                raise ConnectionError("net-shim simulated drop")
+                _shim_time.sleep(_SHIM_RTO_S)   # retransmission timeout
             return _shim_orig(peer_ip, peer_port, message)
         _np_mod.NetworkManager.send_message = staticmethod(_shim_send)
         print(f"🌐 net-shim active: delay={_d_ms}ms loss={_loss}%")

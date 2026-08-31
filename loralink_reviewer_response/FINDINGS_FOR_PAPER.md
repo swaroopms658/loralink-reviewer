@@ -146,11 +146,26 @@ Colab package.
 **1 — Reviewer concern:** no study of how the system behaves under realistic
 network conditions. ⚪
 
-**2 — Results:** ⏳ not yet run (`05_network_netem`, delay × loss sweep).
+**2 — Results:** ⏳ re-run pending. The first attempt produced no data: all 12
+cells failed because **`tc netem` is unavailable on Colab** — it runs under
+gVisor, which ships the `tc` binary but no `sch_netem` module, so every
+`tc qdisc add` exits 2. The fallback shim existed but never fired, because the
+availability check only tested for the binary and root. Fixed.
 
-Will be labelled loopback + `tc netem` emulation, not WAN. Packet-loss cells are
-expected to return partial results — a dropped send raises `ConnectionError` with
-no retry path, which is itself a finding worth reporting.
+**How shaping will be reported (matters for the caption):**
+
+- **Emulation, not WAN.** Single box, loopback, in-process shim — `tc` is
+  unavailable in this sandbox, so kernel-level shaping was not an option.
+- **Delay** is applied per send and is faithful to added latency.
+- **Loss** is modelled as a **200 ms retransmission timeout** (Linux
+  `TCP_RTO_MIN`), not as a dropped connection. Real packet loss on TCP costs a
+  retransmission, not a failed link. The previous model raised `ConnectionError`
+  on a simulated drop, which aborted the run and would have measured LoraLink's
+  lack of an application-level retry path rather than its behaviour on a lossy
+  link.
+- **Separately worth stating:** LoraLink has no application-level retry, so a
+  genuinely dropped connection *does* end a run. That is a robustness limitation
+  worth disclosing on its own, distinct from the latency study above.
 
 ---
 

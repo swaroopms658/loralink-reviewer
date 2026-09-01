@@ -119,11 +119,53 @@ A100s) `[published, zhao2023fsdp]`; Megatron-LM (52 % of peak on 3072 A100s)
 
 **1 — Reviewer concern:** results stop at 4 nodes; show behaviour beyond that. 🟠
 
-**2 — Results:** ⏳ not yet run (`04_scalability_sim`, 2/4/6/8 workers).
+**2 — Results:** ✅ complete. 8/8 runs, 0 failed — **n = 8 did not OOM**, so the
+full sweep landed. gpt-neo-125M, 30 mini-batches, 2 repeats per size.
 
-Will be labelled **single-box loopback simulation, not WAN** in every table and
-figure. Concedes that loopback ≠ real network and points to the paper's
-real 4-node Topology-A numbers as the physical evidence.
+| workers | step latency (s) | vs 2-worker | mean loss |
+|---|---|---|---|
+| 2 | 0.9135 ± 0.0150 | 1.00× | 4.4106 |
+| 4 | 1.4483 ± 0.0039 | 1.59× | 4.4183 |
+| 6 | 2.0060 ± 0.0259 | 2.20× | 4.4600 |
+| 8 | 2.5858 ± 0.0064 | 2.83× | 4.4726 |
+
+All `[ours]`.
+
+**Step latency grows linearly with worker count**, and unusually cleanly:
+
+```
+latency = 0.345 + 0.279 · n        R² = 0.99968
+```
+
++0.279 s per added worker — and since each worker adds **two** hops (one forward,
+one backward), that is **+0.139 s per pipeline hop**. From 2 to 8 workers, step
+latency rises **+183 %**.
+
+**Quality degrades too:** loss rises 4.4106 → 4.4726 (**+0.062 nats, +1.4 %**)
+from 2 to 8 workers — the same mechanism found in concern 8, since each extra
+stage adds another lossily-compressed activation boundary.
+
+**What this means, stated plainly.** LoraLink processes one micro-batch at a time:
+forward through every stage, then backward through every stage, strictly
+sequentially. There is no micro-batch pipelining, so **additional stages add hops
+without adding parallelism** — adding nodes cannot reduce step time by
+construction, only increase it. Beyond 4 nodes the system therefore scales in
+**capacity, not throughput**: more nodes let a larger model fit, and cost
+latency and a little quality to do it.
+
+That is a defensible and honest answer to the concern, and it is worth stating
+before a reviewer derives it themselves. The standard remedy is micro-batch
+pipelining (GPipe/PipeDream-style), which overlaps stages so added depth buys
+throughput; it is a genuine architectural extension, not a tuning change.
+
+**Caveats.** Single-box loopback: all workers are processes on one T4 and
+contend for the same GPU, which amplifies the slope. On genuinely separate
+machines per-stage compute would shrink as layers spread out — but because
+execution stays sequential, total compute per step is unchanged and the hop
+count still grows, so the linear trend holds in principle and only its magnitude
+is loopback-specific. Device profiling used `LORALINK_FAKE_BENCHMARK=1`
+(synthetic device stats) so that 9 processes would not each run a real
+benchmark; this affects partitioning inputs, not the measured step latency.
 
 ---
 

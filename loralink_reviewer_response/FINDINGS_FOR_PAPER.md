@@ -208,11 +208,56 @@ is what latency is actually sensitive to.
 **1 — Reviewer concern:** Smart Partitioning is not compared against simpler
 schedulers. ⚪
 
-**2 — Results:** ⏳ not yet run (`03_alt_scheduling`: smart, round-robin,
-compute-proportional, random × 3 seeds).
+**2 — Results:** ✅ complete. 12/12 runs, 0 failed, **no infeasible partitions** —
+every strategy placed all 12 layers on the 4-worker cluster. gpt-neo-125M,
+30 mini-batches, 3 seeds, compression ON.
 
-Naive strategies that produce an infeasible assignment fail loudly rather than
-being silently repaired — how often a scheduler breaks is part of the comparison.
+| strategy | layer-balance std | step latency (s) | mean loss |
+|---|---|---|---|
+| `smart` (paper's heuristic) | **2.800** | 1.4920 ± 0.0087 | **4.3879** |
+| `round_robin` | 0.800 | 1.4829 ± 0.0137 | 4.4290 |
+| `proportional` | 0.800 | **1.4571** ± 0.0024 | 4.4290 |
+| `random` | 1.291 ± 0.200 | 1.4906 ± 0.0147 | 4.4043 |
+
+All `[ours]`.
+
+**Smart Partitioning produced the worst layer balance and no latency advantage.**
+Its assignment is `coordinator:1, w:8, w:1, w:1, w:1` — 8 of 12 layers on a
+single worker — against `1,3,3,3,2` for round-robin and proportional. It was
+also the slowest of the four, though the spread across all strategies is only
+**2.4 %**.
+
+**Important caveat, and it is the main one.** This cluster is **homogeneous**:
+all four workers are processes on the same T4 and report identical memory and
+FLOPS. Smart Partitioning is a memory- and throughput-aware heuristic whose
+purpose is adapting to *heterogeneous* devices, and it has nothing to exploit
+here — its greedy fill simply loads the first device to capacity. **This is not
+evidence that Smart Partitioning fails at its design goal**; it is evidence that
+(a) on homogeneous hardware a trivial scheduler matches or beats it, and (b) the
+greedy fill has an imbalance pathology worth fixing. The heterogeneous case
+cannot be tested in this simulation.
+
+**Unexpected finding: partition layout changes model quality.** Loss varies by
+strategy even at fixed seed and data order, because activations are lossily
+compressed (sparsity 0.30) **at every stage boundary**, so *where* the splits
+fall determines which activations get degraded:
+
+- `round_robin` and `proportional` produce identical layer counts and therefore
+  identical loss to four decimals at every seed (4.4487 / 4.4075 / 4.4307) — a
+  clean confirmation that partition → numerics is deterministic.
+- `smart`, splitting after layers 1, 9, 10, 11 rather than 1, 4, 7, 10, gets
+  **0.041 nats lower loss** (4.388 vs 4.429, ≈0.9 %) — its 8 consecutive layers
+  pass without an intervening compression boundary.
+
+So there is a **real trade-off between load balance and quality under lossy
+compression**: balanced schedulers cut the network at more mid-network points
+and pay for it in loss. Smart Partitioning's imbalance buys quality it was not
+designed to buy. Worth stating explicitly — it also implies pipeline depth has a
+quality cost independent of the compression ratio, which the paper currently
+does not discuss.
+
+Caveats: n = 3 seeds, 30 batches, single-box loopback; loss differences ~1 % are
+small relative to that.
 
 ---
 

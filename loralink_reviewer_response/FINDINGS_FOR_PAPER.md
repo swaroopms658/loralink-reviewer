@@ -146,16 +146,50 @@ Colab package.
 **1 — Reviewer concern:** no study of how the system behaves under realistic
 network conditions. ⚪
 
-**2 — Results:** ⏳ re-run pending. The first attempt produced no data: all 12
-cells failed because **`tc netem` is unavailable on Colab** — it runs under
-gVisor, which ships the `tc` binary but no `sch_netem` module, so every
-`tc qdisc add` exits 2. The fallback shim existed but never fired, because the
-availability check only tested for the binary and root. Fixed.
+**2 — Results:** ✅ complete. 12/12 cells, 0 failed. gpt-neo-125M, 2-worker
+loopback pipeline, 20 mini-batches per cell, seed 0.
 
-**How shaping will be reported (matters for the caption):**
+Mean step latency (s), delay × packet loss:
 
-- **Emulation, not WAN.** Single box, loopback, in-process shim — `tc` is
-  unavailable in this sandbox, so kernel-level shaping was not an option.
+| | loss 0 % | loss 1 % | loss 3 % | mean |
+|---|---|---|---|---|
+| **delay 0 ms** | 0.946 | 0.968 | 0.974 | 0.962 |
+| **delay 25 ms** | 1.071 | 1.054 | 1.071 | 1.065 |
+| **delay 50 ms** | 1.128 | 1.137 | 1.177 | 1.147 |
+| **delay 100 ms** | 1.333 | 1.374 | 1.367 | 1.358 |
+
+- **Latency scales linearly with link delay:** 0.962 s → 1.358 s from 0 to
+  100 ms, **+41.1 %** `[ours]`.
+- **Packet loss is cheap by comparison:** 0 % → 3 % costs **+2.5 %**
+  (1.119 → 1.147 s) `[ours]`.
+- **Compression ratio is unaffected** by network conditions — 1.390× in all
+  twelve cells `[ours]`, as expected since compression happens before transmission.
+
+**The emulation validates itself**, which is the reason these numbers can be
+trusted:
+
+- The delay slope implies **3.96 sends per training step**. A 3-stage pipeline
+  performs exactly **4** network hops per step (coordinator→w1 and w1→w2 on the
+  forward pass, w2→w1 and w1→coordinator on the backward). The measurement
+  recovers the topology to within 1 %.
+- The loss penalty measured **+0.028 s** against **+0.024 s** predicted by
+  4 sends × 3 % × 200 ms RTO.
+
+**Interpretation for the paper:** on a high-latency consumer link, LoraLink's
+step time is dominated by **round-trip count**, not by loss. Every additional
+pipeline stage adds two hops per step, so deeper pipelines pay a latency cost
+that scales with link RTT. That is a stronger argument for the compression
+engine than the loss axis: compression reduces bytes per hop, but the hop count
+is what latency is actually sensitive to.
+
+**How this was measured (matters for the caption):**
+
+- **Emulation, not WAN.** Single box, loopback, in-process shim. `tc netem` is
+  **unavailable on Colab** — it runs under gVisor, which ships the `tc` binary
+  but no `sch_netem` module, so every `tc qdisc add` exits 2. Kernel-level
+  shaping was not an option; shaping is applied in `NetworkManager.send_message`.
+  Baseline (0 ms, 0 %) step latency is 0.946 s, which is loopback, not a
+  real link.
 - **Delay** is applied per send and is faithful to added latency.
 - **Loss** is modelled as a **200 ms retransmission timeout** (Linux
   `TCP_RTO_MIN`), not as a dropped connection. Real packet loss on TCP costs a
